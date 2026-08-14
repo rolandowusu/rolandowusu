@@ -1,0 +1,229 @@
+\chapter{The anatomy of a GLM}
+
+Every model in this book --- logistic, Poisson, negative binomial, and their mixed
+versions --- is built from the same three parts. Learn the three parts once and
+you never have to memorise anything again.
+
+\section{The three moving parts}
+
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small, node distance=8mm,
+  b/.style={rectangle, rounded corners=2pt, draw=primary, fill=primarylt,
+            align=center, inner sep=6pt, text width=38mm},
+  ar/.style={-{Stealth[length=5pt]}, draw=rule1, very thick}]
+\node[b] (a) {\textbf{1. Random component}\\[2pt]\footnotesize
+  What distribution does $y$ follow?\\ normal / binomial / Poisson / NB};
+\node[b, right=12mm of a] (b) {\textbf{2. Systematic component}\\[2pt]\footnotesize
+  The linear predictor\\ $\eta = \beta_0 + \beta_1x_1 + \dots$};
+\node[b, right=12mm of b] (c) {\textbf{3. Link function}\\[2pt]\footnotesize
+  How $\eta$ connects to the mean\\ $g(\mu) = \eta$};
+\draw[ar] (a) -- (b);
+\draw[ar] (b) -- (c);
+\end{tikzpicture}
+\end{center}
+
+\subsection{Part 1: the random component}
+
+This is your answer to ``what kind of thing is my outcome?''. It fixes the
+relationship between the mean and the variance, which is really the thing that
+matters:
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Family} & \textbf{Outcome} & \textbf{Mean} & \textbf{Variance} \\
+\midrule
+Gaussian          & any real number        & $\mu$ & $\sigma^2$ (free) \\
+Binomial          & $0/1$, or $k$ of $n$   & $\mu = np$ & $np(1-p)$ \\
+Poisson           & $0,1,2,\dots$          & $\mu$ & $\mu$ \\
+Negative binomial & $0,1,2,\dots$          & $\mu$ & $\mu + \mu^2/\theta$ \\
+Gamma             & positive continuous    & $\mu$ & $\mu^2/\nu$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Part 2: the systematic component}
+
+This is the familiar part --- a weighted sum of your predictors:
+\[
+\eta_i = \beta_0 + \beta_1 x_{1i} + \beta_2 x_{2i} + \dots + \beta_p x_{pi}.
+\]
+It is called the \emph{linear predictor} and it is written $\eta$ (``eta''). Note
+that $\eta$ can be any number at all, from $-\infty$ to $+\infty$. That is exactly
+the problem the third part solves.
+
+\subsection{Part 3: the link function}
+
+A probability must live in $[0,1]$. A count mean must be positive. But $\eta$ can
+be anything. The link function $g$ is the translator:
+\[
+g(\mu_i) = \eta_i \qquad\Longleftrightarrow\qquad \mu_i = g^{-1}(\eta_i).
+\]
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Link} & \textbf{$g(\mu)$} & \textbf{Inverse $g^{-1}(\eta)$} & \textbf{Used with} \\
+\midrule
+identity & $\mu$                    & $\eta$                     & Gaussian \\
+logit    & $\log\frac{\mu}{1-\mu}$  & $\frac{e^{\eta}}{1+e^{\eta}}$ & binomial \\
+probit   & $\Phi^{-1}(\mu)$         & $\Phi(\eta)$               & binomial \\
+log      & $\log \mu$               & $e^{\eta}$                 & Poisson, NB, gamma \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Here are the two links that matter most, drawn:
+
+<<link-plots, fig.width=9, fig.height=3.4, out.width="\\textwidth", fig.cap="The two workhorse inverse links. The logistic curve squashes any number into (0,1). The exponential curve turns any number into something positive.">>=
+par(mfrow = c(1, 2)); par_book()
+eta <- seq(-6, 6, length.out = 400)
+
+plot(eta, plogis(eta), type = "l", lwd = 3, col = PAL["primary"],
+     xlab = expression(eta ~ " (the linear predictor)"),
+     ylab = expression(mu ~ " = probability"),
+     main = "Inverse logit: any number -> (0, 1)")
+grid_book(); abline(h = c(0, 1), lty = 3, col = PAL["grey"])
+abline(h = 0.5, v = 0, lty = 3, col = PAL["accent"])
+
+plot(eta, exp(eta), type = "l", lwd = 3, col = PAL["accent"],
+     xlab = expression(eta ~ " (the linear predictor)"),
+     ylab = expression(mu ~ " = expected count"),
+     main = "Inverse log: any number -> positive")
+grid_book(); abline(h = 0, lty = 3, col = PAL["grey"])
+@
+
+\begin{plainenglish}[Why we bother with links]
+Because we want to keep the convenient ``add up the effects'' structure of linear
+regression, but we need the answer to come out on a legal scale. So we do the
+adding-up on an unrestricted scale ($\eta$), and then squash the result into the
+legal range at the very end.
+\end{plainenglish}
+
+\section{The consequence: effects multiply}
+
+This is the single most important practical consequence of using a log or logit
+link, and the source of nearly every interpretation mistake.
+
+On the $\eta$ scale, effects add:
+\[
+\log \mu = \beta_0 + \beta_1 x \quad\Longrightarrow\quad
+\text{a one-unit rise in } x \text{ adds } \beta_1 \text{ to } \log\mu.
+\]
+On the scale you actually care about, effects \emph{multiply}:
+\[
+\mu = e^{\beta_0} e^{\beta_1 x} \quad\Longrightarrow\quad
+\text{a one-unit rise in } x \text{ multiplies } \mu \text{ by } e^{\beta_1}.
+\]
+
+<<multiplicative, echo=TRUE>>=
+beta1 <- 0.55
+exp(beta1)                # multiplier for a 1-unit increase in x
+(exp(beta1) - 1) * 100    # ... expressed as a percentage change
+@
+
+So a coefficient of \Sexpr{beta1} on the log scale means the expected count is
+multiplied by \Sexpr{round(exp(beta1), 3)} --- a
+\Sexpr{round((exp(beta1)-1)*100)}\% increase --- for every one-unit increase in $x$.
+
+\begin{keyidea}
+Raw GLM coefficients are on the \emph{link} scale and are almost never the thing
+to report. Exponentiate them. For a log link you get a \textbf{rate ratio} (or
+incidence rate ratio, IRR). For a logit link you get an \textbf{odds ratio} (OR).
+\end{keyidea}
+
+\section{How \R{} fits these models}
+
+\R{} does not use least squares here. It uses \emph{maximum likelihood}, computed
+by an algorithm called iteratively reweighted least squares (IRLS). You do not
+need the details, but two by-products of it appear in every printout and are worth
+knowing.
+
+\subsection{Deviance}
+
+The deviance is the GLM version of ``residual sum of squares''. Formally it is
+\[
+D = 2\left[\ell_{\text{saturated}} - \ell_{\text{model}}\right],
+\]
+where $\ell$ is the log-likelihood and the ``saturated'' model is the one that
+fits every data point perfectly. Smaller deviance means a better fit. \R{} prints
+two of them:
+
+\begin{itemize}
+  \item \textbf{Null deviance} --- how badly an intercept-only model fits.
+  \item \textbf{Residual deviance} --- how badly \emph{your} model fits.
+\end{itemize}
+
+The drop from null to residual is the analogue of the regression sum of squares.
+
+\subsection{Degrees of freedom}
+
+Residual degrees of freedom $=$ number of observations $-$ number of estimated
+coefficients. You will use the pair (residual deviance, residual df) constantly in
+Chapter 7 to detect overdispersion.
+
+Let us look at an actual printout and label every piece of it.
+
+<<glm-anatomy-fit>>=
+data(warpbreaks)
+m <- glm(breaks ~ wool + tension, family = poisson, data = warpbreaks)
+summary(m)
+@
+
+Reading that output, piece by piece:
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.30\textwidth}p{0.66\textwidth}@{}}
+\toprule
+\textbf{Line in the printout} & \textbf{What it means} \\
+\midrule
+\fn{Estimate} & The coefficient on the \emph{link} scale (here, log counts). \\
+\fn{Std. Error} & Its standard error, from the curvature of the likelihood. \\
+\fn{z value} & Estimate / Std.\ Error. A Wald statistic. \\
+\fn{Pr(>|z|)} & Two-sided $p$-value from the standard normal. \\
+\fn{Dispersion parameter \dots taken to be 1} & \R{} is \emph{assuming} variance $=$ mean. Chapter 7 checks whether that is true. \\
+\fn{Null deviance} & Fit of the intercept-only model. \\
+\fn{Residual deviance} & Fit of this model. \\
+\fn{AIC} & $-2\ell + 2k$; used to compare models (Chapter 13). \\
+\fn{Fisher Scoring iterations} & How many IRLS steps were needed. Under about 25 is normal; a very large number hints at trouble. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Getting things out of a fitted model}
+
+These accessor functions work on essentially every model object in this book, and
+knowing them saves an enormous amount of time.
+
+<<accessors>>=
+coef(m)                          # coefficients on the link scale
+exp(coef(m))                     # ... as multiplicative effects
+head(fitted(m), 4)               # fitted means, on the RESPONSE scale
+head(predict(m), 4)              # linear predictor eta (link scale) -- careful!
+head(predict(m, type = "response"), 4)   # the same as fitted()
+deviance(m); df.residual(m); AIC(m); logLik(m)
+@
+
+\begin{warningbox}[\fn{predict()} defaults to the link scale]
+For a GLM, \fn{predict(m)} returns $\eta$, not $\mu$. If you forget
+\fn{type = "response"} you will get log-counts or log-odds and wonder why your
+``predicted counts'' are negative. This trips up nearly everybody at least once.
+\end{warningbox}
+
+Confidence intervals are also worth doing properly. \fn{confint()} on a
+\fn{glm} object gives \emph{profile likelihood} intervals, which are more accurate
+than the textbook estimate $\pm 1.96 \times$ SE, especially in small samples:
+
+<<confint-demo>>=
+confint(m)                      # profile likelihood (better)
+confint.default(m)              # Wald: estimate +/- 1.96 SE (quick and dirty)
+exp(confint(m))                 # rate ratios with CI -- the reportable version
+@
+
+\begin{rulebox}
+Report exponentiated coefficients with profile-likelihood confidence intervals.
+That single habit will make your results both correct and readable.
+\end{rulebox}

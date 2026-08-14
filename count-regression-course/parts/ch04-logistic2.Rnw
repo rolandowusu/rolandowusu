@@ -1,0 +1,351 @@
+\chapter{Logistic regression II: checking and extending}
+
+A fitted logistic model raises two separate questions, and people constantly
+confuse them:
+
+\begin{enumerate}
+  \item \textbf{Discrimination.} Can the model tell the cases from the non-cases?
+        Measured by the ROC curve and the area under it (AUC).
+  \item \textbf{Calibration.} When the model says 30\%, does it happen about 30\%
+        of the time? Measured by calibration plots and goodness-of-fit tests.
+\end{enumerate}
+
+A model can discriminate beautifully and be badly calibrated, or be perfectly
+calibrated and useless at discriminating. You need both.
+
+<<ch4-setup, echo=FALSE>>=
+data(birthwt, package = "MASS")
+bw <- within(birthwt, {
+  race  <- factor(race, levels = 1:3, labels = c("white", "black", "other"))
+  smoke <- factor(smoke, levels = 0:1, labels = c("no", "yes"))
+  ht    <- factor(ht,    levels = 0:1, labels = c("no", "yes"))
+  ui    <- factor(ui,    levels = 0:1, labels = c("no", "yes"))
+})
+fit1 <- glm(low ~ age + lwt + race + smoke + ht + ui, family = binomial, data = bw)
+@
+
+\section{Turning probabilities into decisions}
+
+<<confusion>>=
+phat <- fitted(fit1)                  # predicted probabilities
+pred <- ifelse(phat > 0.5, 1, 0)      # classify at the usual 0.5 cut-off
+tab  <- table(predicted = pred, observed = bw$low)
+tab
+@
+
+<<confusion-stats>>=
+sens <- tab["1", "1"] / sum(tab[, "1"])     # sensitivity: caught cases / all cases
+spec <- tab["0", "0"] / sum(tab[, "0"])     # specificity: caught controls / all controls
+acc  <- sum(diag(tab)) / sum(tab)
+c(sensitivity = sens, specificity = spec, accuracy = acc)
+mean(bw$low == 0)                            # accuracy of "always predict 0"
+@
+
+\begin{warningbox}[Accuracy is a trap]
+Here the model's accuracy is \Sexpr{round(acc, 3)}, and simply predicting ``never
+low birth weight'' for everybody scores \Sexpr{round(mean(bw$low == 0), 3)}. When
+one class is more common, accuracy mostly measures how common that class is.
+Never report accuracy alone.
+\end{warningbox}
+
+The 0.5 cut-off is a convention, not a law. If missing a case is much worse than a
+false alarm, lower it.
+
+\section{The ROC curve and AUC}
+
+The ROC curve draws sensitivity against $1 -$ specificity as you slide the cut-off
+from 1 down to 0. Rather than reach for a package, here is the whole thing in nine
+lines --- it demystifies the plot completely.
+
+<<roc-fn>>=
+roc_manual <- function(prob, y) {
+  ord <- order(prob, decreasing = TRUE)
+  y   <- y[ord]
+  tpr <- cumsum(y)      / sum(y)         # true positive rate at each cut-off
+  fpr <- cumsum(1 - y)  / sum(1 - y)     # false positive rate
+  auc <- sum(diff(c(0, fpr)) * (c(0, head(tpr, -1)) + tpr) / 2)   # trapezoid rule
+  list(fpr = c(0, fpr), tpr = c(0, tpr), auc = auc)
+}
+r <- roc_manual(phat, bw$low)
+r$auc
+@
+
+<<roc-plot, fig.width=9, fig.height=4.2, out.width="\\textwidth", fig.cap="Left: the ROC curve. The diagonal is a coin flip; the further towards the top-left corner, the better. Right: how sensitivity and specificity trade off as the cut-off moves.">>=
+par(mfrow = c(1, 2)); par_book()
+plot(r$fpr, r$tpr, type = "l", lwd = 3, col = PAL["primary"],
+     xlab = "1 - specificity (false positive rate)",
+     ylab = "sensitivity (true positive rate)",
+     main = sprintf("ROC curve, AUC = %.3f", r$auc))
+grid_book()
+polygon(c(r$fpr, 1), c(r$tpr, 0), col = adjustcolor(PAL["primary"], 0.10), border = NA)
+abline(0, 1, lty = 2, col = PAL["grey"], lwd = 2)
+
+cuts <- seq(0.01, 0.99, by = 0.01)
+se <- sapply(cuts, function(k) mean(phat[bw$low == 1] >= k))
+sp <- sapply(cuts, function(k) mean(phat[bw$low == 0] <  k))
+plot(cuts, se, type = "l", lwd = 3, col = PAL["red"], ylim = c(0, 1),
+     xlab = "probability cut-off", ylab = "rate", main = "The trade-off")
+grid_book()
+lines(cuts, sp, lwd = 3, col = PAL["green"])
+abline(v = cuts[which.max(se + sp)], lty = 3, col = PAL["accent"], lwd = 2)
+legend("right", bty = "n", cex = 0.8, lwd = 3,
+       col = c(PAL["red"], PAL["green"], PAL["accent"]), lty = c(1,1,3),
+       legend = c("sensitivity", "specificity", "best sens+spec"))
+@
+
+\begin{plainenglish}[What AUC actually measures]
+Pick one case and one non-case at random. The AUC is the probability that the
+model gives the case a higher score. AUC $= 0.5$ is a coin flip; $1.0$ is perfect.
+Roughly: 0.6 poor, 0.7 acceptable, 0.8 good, 0.9 excellent --- but the right
+threshold depends entirely on what the model is for.
+\end{plainenglish}
+
+\begin{warningbox}[This AUC is optimistic]
+We computed the AUC on the same data used to fit the model. That always flatters
+it. For an honest figure use cross-validation or a held-out sample.
+\end{warningbox}
+
+<<cv-auc>>=
+set.seed(7)
+K     <- 10
+folds <- sample(rep(1:K, length.out = nrow(bw)))
+oof   <- numeric(nrow(bw))                     # out-of-fold predictions
+for (k in 1:K) {
+  m_k <- glm(formula(fit1), family = binomial, data = bw[folds != k, ])
+  oof[folds == k] <- predict(m_k, newdata = bw[folds == k, ], type = "response")
+}
+c(in_sample = r$auc, cross_validated = roc_manual(oof, bw$low)$auc)
+@
+
+\section{Calibration}
+
+Sort the predictions into bins, and compare the average prediction in each bin with
+the proportion actually observed. On a perfectly calibrated model the points sit on
+the diagonal.
+
+<<calibration, fig.width=6.6, fig.height=4.2, out.width="0.75\\textwidth", fig.cap="Calibration plot with 10 equal-sized bins. Points near the diagonal mean the predicted probabilities can be taken at face value.">>=
+par_book()
+g   <- cut(phat, breaks = quantile(phat, probs = seq(0, 1, 0.1)), include.lowest = TRUE)
+obs <- tapply(bw$low, g, mean)
+exp_ <- tapply(phat,  g, mean)
+n_g <- tapply(bw$low, g, length)
+se_g <- sqrt(obs * (1 - obs) / n_g)
+plot(exp_, obs, pch = 19, col = PAL["primary"], cex = 1.4, xlim = c(0, 0.8),
+     ylim = c(0, 0.9), xlab = "mean predicted probability",
+     ylab = "observed proportion", main = "Calibration in 10 bins")
+grid_book(); abline(0, 1, lwd = 2, lty = 2, col = PAL["grey"])
+arrows(exp_, obs - 1.96*se_g, exp_, obs + 1.96*se_g,
+       length = 0.03, angle = 90, code = 3, col = PAL["primary"])
+lines(lowess(exp_, obs), col = PAL["accent"], lwd = 2.5)
+@
+
+\subsection{The Hosmer--Lemeshow test}
+
+The same idea turned into a formal test: bin the predictions into $g$ groups
+(usually 10), then compare observed and expected counts with a chi-squared
+statistic on $g-2$ degrees of freedom.
+
+<<hl-test>>=
+hoslem <- function(y, phat, g = 10) {
+  cuts <- quantile(phat, probs = seq(0, 1, length.out = g + 1))
+  grp  <- cut(phat, breaks = cuts, include.lowest = TRUE)
+  obs1 <- tapply(y, grp, sum);              obs0 <- tapply(1 - y, grp, sum)
+  exp1 <- tapply(phat, grp, sum);           exp0 <- tapply(1 - phat, grp, sum)
+  X2   <- sum((obs1 - exp1)^2 / exp1) + sum((obs0 - exp0)^2 / exp0)
+  data.frame(X2 = X2, df = g - 2, p.value = pchisq(X2, g - 2, lower.tail = FALSE))
+}
+hoslem(bw$low, phat)
+@
+
+\begin{warningbox}[How to read a goodness-of-fit $p$-value]
+Here a \emph{large} $p$-value is the reassuring one: no evidence of poor fit. But
+this test is weak. It has little power in small samples, it is sensitive to the
+arbitrary number of bins, and in very large samples it rejects fit that is
+practically fine. Use it as a sanity check alongside the calibration plot, never
+as the only evidence.
+\end{warningbox}
+
+\section{Residuals and influence}
+
+Raw residuals $y - \hat p$ are almost useless for a binary outcome --- they can
+only take two values for any given $\hat p$, so a residual plot looks like two
+curved stripes. Two better versions exist.
+
+\begin{itemize}
+  \item \textbf{Pearson residual:} $r_i = \dfrac{y_i - \hat p_i}{\sqrt{\hat p_i(1-\hat p_i)}}$,
+        which standardises by the expected variability.
+  \item \textbf{Deviance residual:} the signed square root of each observation's
+        contribution to the deviance. This is \R's default from \fn{residuals()}.
+\end{itemize}
+
+<<binom-resid, fig.width=9, fig.height=4, out.width="\\textwidth", fig.cap="Left: the two-stripe pattern that makes raw residual plots useless for binary data; the smoother is what you actually read. Right: influence, via Cook's distance.">>=
+par(mfrow = c(1, 2)); par_book()
+plot(fitted(fit1), residuals(fit1, type = "deviance"),
+     pch = 21, bg = adjustcolor(PAL["primary"], 0.4), col = "white", cex = 1.1,
+     xlab = "fitted probability", ylab = "deviance residual",
+     main = "Deviance residuals (read the smoother)")
+grid_book(); abline(h = 0, col = PAL["grey"], lwd = 1.5)
+lines(lowess(fitted(fit1), residuals(fit1, type = "deviance")),
+      col = PAL["red"], lwd = 3)
+
+cd <- cooks.distance(fit1)
+plot(cd, type = "h", lwd = 2, col = PAL["primary"], xlab = "observation",
+     ylab = "Cook's distance", main = "Influence")
+grid_book()
+abline(h = 4 / nrow(bw), lty = 2, col = PAL["red"])
+text(which(cd > 4/nrow(bw)), cd[cd > 4/nrow(bw)],
+     labels = which(cd > 4/nrow(bw)), pos = 3, cex = 0.65, col = PAL["red"])
+@
+
+\begin{plainenglish}[What you are looking for]
+In the left panel, the red smoother should hug zero. A systematic bend means the
+model has the wrong shape --- perhaps a predictor should be curved, or an
+interaction is missing. In the right panel, tall spikes are observations that
+would move the coefficients noticeably if deleted. Investigate them; do not delete
+them without a reason.
+\end{plainenglish}
+
+A binned residual plot is often more readable than either:
+
+<<binned-resid, fig.width=6.6, fig.height=4, out.width="0.75\\textwidth", fig.cap="Binned residual plot. Average the residuals within bins of fitted value; roughly 95\\% of the points should fall inside the grey band if the model fits.">>=
+par_book()
+br <- function(x, r, nbins = 15) {
+  b  <- cut(x, breaks = quantile(x, seq(0, 1, length.out = nbins + 1)),
+            include.lowest = TRUE)
+  data.frame(x = tapply(x, b, mean), y = tapply(r, b, mean),
+             se = tapply(r, b, function(z) 2 * sd(z) / sqrt(length(z))))
+}
+bb <- br(fitted(fit1), residuals(fit1, type = "response"))
+plot(bb$x, bb$y, pch = 19, col = PAL["primary"], cex = 1.3,
+     ylim = range(c(bb$y - bb$se, bb$y + bb$se, 0)) * 1.2,
+     xlab = "mean fitted probability in bin", ylab = "mean residual in bin",
+     main = "Binned residuals")
+grid_book(); abline(h = 0, col = PAL["grey"], lwd = 1.5)
+lines(bb$x, bb$se, lty = 2, col = PAL["red"]); lines(bb$x, -bb$se, lty = 2, col = PAL["red"])
+@
+
+\section{Grouped (binomial) data}
+
+Often your data arrive already aggregated: ``out of $n$ animals in this herd, $k$
+got the disease''. That is still logistic regression --- the outcome is just
+binomial rather than Bernoulli.
+
+<<cbpp-fit>>=
+data(cbpp, package = "lme4")
+head(cbpp, 4)
+## Two-column response: successes and failures
+mb <- glm(cbind(incidence, size - incidence) ~ period, family = binomial, data = cbpp)
+summary(mb)
+@
+
+\begin{keyidea}[Three ways to give \R{} a binomial response]
+\fn{glm(cbind(k, n-k) \textasciitilde{} x, binomial)} --- successes and failures. \\
+\fn{glm(prop \textasciitilde{} x, binomial, weights = n)} --- proportion plus a weight. \\
+\fn{glm(y \textasciitilde{} x, binomial)} with \fn{y} a 0/1 vector or a two-level factor. \\
+All three fit the same model. The first two let you detect overdispersion; the
+third cannot.
+\end{keyidea}
+
+\section{Overdispersion in binomial models}
+
+For grouped data, the binomial says $\Var(k) = np(1-p)$ exactly. Real data often
+vary more, because animals within the same herd are not independent. Check the same
+way as for counts:
+
+<<binom-overdisp>>=
+c(residual_deviance = deviance(mb), df = df.residual(mb),
+  ratio = deviance(mb) / df.residual(mb))
+## The Pearson version is the one to trust
+X2 <- sum(residuals(mb, type = "pearson")^2)
+c(pearson_X2 = X2, df = df.residual(mb), dispersion = X2 / df.residual(mb))
+pchisq(X2, df.residual(mb), lower.tail = FALSE)     # p-value for "no overdispersion"
+@
+
+A dispersion of \Sexpr{round(X2/df.residual(mb), 2)} means the data are about
+\Sexpr{round(X2/df.residual(mb), 1)} times more variable than the binomial allows.
+Standard errors from that model are too small by roughly
+$\sqrt{\Sexpr{round(X2/df.residual(mb), 2)}} = \Sexpr{round(sqrt(X2/df.residual(mb)), 2)}$.
+
+The quick repair is a quasi-binomial fit, which multiplies all the standard errors
+by that square root:
+
+<<quasibinom>>=
+mq <- glm(cbind(incidence, size - incidence) ~ period,
+          family = quasibinomial, data = cbpp)
+summary(mq)$dispersion
+round(cbind(binomial = coef(summary(mb))[, "Std. Error"],
+            quasibinomial = coef(summary(mq))[, "Std. Error"]), 4)
+@
+
+The coefficients are identical; only the standard errors change. The proper repair
+--- modelling \emph{why} herds differ --- is a mixed model, which we do in
+Chapter 15 with this same dataset.
+
+\begin{warningbox}[You cannot detect overdispersion in ungrouped 0/1 data]
+With a Bernoulli outcome the residual deviance carries no information about
+dispersion, so the deviance/df ratio is meaningless. If your data are truly one row
+per individual with no grouping, ``binary overdispersion'' is not a thing you can
+test for --- what you can have instead is correlation between individuals, which
+needs a random effect or a robust standard error.
+\end{warningbox}
+
+\section{Complete separation}
+
+If some combination of predictors perfectly predicts the outcome, the maximum
+likelihood estimate runs off to infinity. \R{} warns you --- but the warning is
+easy to miss.
+
+<<separation, warning=TRUE, message=TRUE>>=
+sep <- data.frame(x = c(1, 2, 3, 4, 5, 6), y = c(0, 0, 0, 1, 1, 1))
+ms  <- glm(y ~ x, family = binomial, data = sep)
+round(coef(summary(ms)), 3)
+@
+
+Notice the absurd estimate with an enormous standard error, and a $p$-value near 1
+despite a perfect relationship. Signs of separation:
+
+\begin{itemize}
+  \item coefficients in the tens or hundreds;
+  \item standard errors in the thousands;
+  \item the warning \fn{fitted probabilities numerically 0 or 1 occurred};
+  \item residual deviance essentially zero.
+\end{itemize}
+
+Fixes, in order of preference: combine sparse categories; drop the offending
+predictor; or use penalised likelihood (Firth logistic regression, in the
+\pkg{logistf} or \pkg{brglm2} packages), which always gives finite estimates.
+
+\section{Other links for binary data}
+
+The logit is not the only choice.
+
+<<links-compare>>=
+m_logit  <- glm(low ~ lwt + smoke, family = binomial(link = "logit"),    data = bw)
+m_probit <- glm(low ~ lwt + smoke, family = binomial(link = "probit"),   data = bw)
+m_cll    <- glm(low ~ lwt + smoke, family = binomial(link = "cloglog"),  data = bw)
+round(rbind(logit = coef(m_logit), probit = coef(m_probit), cloglog = coef(m_cll)), 3)
+sapply(list(logit = m_logit, probit = m_probit, cloglog = m_cll), AIC)
+@
+
+<<links-plot, fig.width=6.8, fig.height=3.8, out.width="0.78\\textwidth", fig.cap="Three link functions on the same data. Logit and probit are nearly indistinguishable; the complementary log-log is asymmetric.">>=
+par_book()
+nd <- data.frame(lwt = seq(80, 250, 2), smoke = "yes")
+plot(nd$lwt, predict(m_logit, nd, type = "response"), type = "l", lwd = 3,
+     col = PAL["primary"], ylim = c(0, 0.8), xlab = "mother's weight (lbs)",
+     ylab = "P(low birth weight)", main = "logit vs probit vs cloglog")
+grid_book()
+lines(nd$lwt, predict(m_probit, nd, type = "response"), lwd = 3, lty = 2, col = PAL["accent"])
+lines(nd$lwt, predict(m_cll,    nd, type = "response"), lwd = 3, lty = 3, col = PAL["green"])
+legend("topright", bty = "n", lwd = 3, lty = 1:3, cex = 0.85,
+       col = c(PAL["primary"], PAL["accent"], PAL["green"]),
+       legend = c("logit", "probit", "cloglog"))
+@
+
+\begin{rulebox}
+Use the logit unless you have a specific reason not to. It is the only one whose
+coefficients exponentiate to odds ratios, which is why every applied field reports
+it. The probit gives practically identical fitted probabilities. The cloglog is
+genuinely different and is the right choice when the binary outcome comes from an
+underlying Poisson process (``did at least one event happen?''), which links it
+naturally to survival analysis.
+\end{rulebox}

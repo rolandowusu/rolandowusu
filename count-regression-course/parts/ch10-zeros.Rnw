@@ -1,0 +1,310 @@
+\chapter{Too many zeros: zero-inflated and hurdle models}
+
+\section{Two kinds of zero}
+
+Ask people how many cigarettes they smoked yesterday. You get lots of zeros, but
+they are not all the same kind of zero:
+
+\begin{itemize}
+  \item \textbf{Structural zeros} come from people who do not smoke at all. For
+        them the count \emph{cannot} be anything but zero.
+  \item \textbf{Sampling zeros} come from smokers who happened not to smoke
+        yesterday. For them zero is just a low draw from a count process.
+\end{itemize}
+
+A Poisson or negative binomial has only one mechanism, so it must explain both
+kinds with the same parameter. When the structural group is large, it cannot, and
+you get more zeros than any single count distribution can produce.
+
+\begin{plainenglish}[The test question]
+``Is there a group in my data for whom the event is impossible, not merely
+unlikely?'' If yes, you probably want zero-inflation. If no --- everyone could in
+principle have a non-zero count --- a negative binomial usually handles the zeros
+by itself.
+\end{plainenglish}
+
+\section{The zero-inflated model}
+
+A zero-inflated model is a \emph{mixture} of two processes:
+\[
+\Pr(Y_i = 0) = \pi_i + (1 - \pi_i)\,f(0; \mu_i)
+\]
+\[
+\Pr(Y_i = k) = (1 - \pi_i)\,f(k; \mu_i), \qquad k = 1, 2, 3, \dots
+\]
+where $\pi_i$ is the probability of being in the ``always zero'' group (modelled
+with a logistic regression) and $f$ is a Poisson or negative binomial (modelled
+with a log link).
+
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\scriptsize, node distance=4mm,
+  b/.style={rectangle, rounded corners=2pt, draw=rule1, fill=white, align=center,
+            inner sep=4pt, text width=32mm},
+  ar/.style={-{Stealth[length=4pt]}, draw=rule1, thick}]
+\node[b, fill=primarylt, draw=primary, text width=22mm] (s) {Each observation};
+\node[b, above right=2mm and 12mm of s, fill=redlt, draw=redbox] (z)
+  {\textbf{Structural zero}\\prob.\ $\pi_i$ (logistic)\\count is always 0};
+\node[b, below right=2mm and 12mm of s, fill=greenlt, draw=greenbox] (c)
+  {\textbf{Count process}\\prob.\ $1-\pi_i$ (log link)\\Poisson or NB, may give 0};
+\node[b, fill=amberlt, draw=amber, text width=24mm]
+  (o) at ($(z)!0.5!(c) + (3.4cm,0)$) {\textbf{Observed zero}\\could come from\\either route};
+\draw[ar] (s) -- (z); \draw[ar] (s) -- (c);
+\draw[ar] (z) -- (o); \draw[ar] (c) -- (o);
+\end{tikzpicture}
+\end{center}
+
+\section{A worked example}
+
+\fn{bioChemists} records the number of articles published by 915 PhD biochemistry
+students in their last three years of study.
+
+<<bio-data>>=
+data(bioChemists, package = "pscl")
+str(bioChemists, give.attr = FALSE)
+table(bioChemists$art)
+round(100 * mean(bioChemists$art == 0), 1)     # percent zeros
+@
+
+\Sexpr{round(100 * mean(bioChemists$art == 0), 1)}\% published nothing. Some of
+those were surely trying and unlucky; others were probably never on a publication
+track at all. That is exactly the two-group structure zero-inflation describes.
+
+<<bio-baseline>>=
+mp  <- glm(art ~ fem + mar + kid5 + phd + ment, family = poisson, data = bioChemists)
+mnb <- MASS::glm.nb(art ~ fem + mar + kid5 + phd + ment, data = bioChemists)
+
+c(observed_zeros  = sum(bioChemists$art == 0),
+  poisson_expects = round(sum(dpois(0, fitted(mp))), 1),
+  negbin_expects  = round(sum(dnbinom(0, mu = fitted(mnb), size = mnb$theta)), 1))
+@
+
+The Poisson expects about \Sexpr{round(sum(dpois(0, fitted(mp))))} zeros against
+\Sexpr{sum(bioChemists$art == 0)} observed --- a serious shortfall. The negative
+binomial does much better on its own, which is already a useful clue.
+
+\subsection{Fitting a zero-inflated model}
+
+The formula has two parts separated by \fn{|}: the count model on the left, the
+zero-inflation model on the right.
+
+<<zip-fit>>=
+library(pscl)
+zip <- zeroinfl(art ~ fem + mar + kid5 + phd + ment | fem + mar + kid5 + phd + ment,
+                data = bioChemists, dist = "poisson")
+summary(zip)
+@
+
+\begin{keyidea}[Reading a two-part printout]
+\textbf{Count model coefficients} are on the log scale and apply to everyone
+\emph{not} in the structural-zero group. Exponentiate them for rate ratios. \\
+\textbf{Zero-inflation model coefficients} are on the logit scale and predict
+membership of the ``always zero'' group. A \emph{positive} coefficient means
+\emph{more likely to be a structural zero}, i.e.\ less likely to publish at all.
+\end{keyidea}
+
+<<zip-interp>>=
+round(exp(coef(zip, model = "count")), 3)     # rate ratios among "potential publishers"
+round(exp(coef(zip, model = "zero")), 3)      # odds ratios for being a structural zero
+@
+
+For example, \fn{ment} (articles by the student's mentor) has a negative
+zero-inflation coefficient, so students with productive mentors are less likely to
+fall in the never-publishing group --- which is exactly what you would expect.
+
+\subsection{Zero-inflated negative binomial}
+
+You can zero-inflate a negative binomial too, which handles excess zeros
+\emph{and} extra variability at once.
+
+<<zinb-fit>>=
+zinb <- zeroinfl(art ~ fem + mar + kid5 + phd + ment | fem + mar + kid5 + phd + ment,
+                 data = bioChemists, dist = "negbin")
+round(c(AIC_poisson = AIC(mp), AIC_negbin = AIC(mnb),
+        AIC_zip = AIC(zip), AIC_zinb = AIC(zinb)), 1)
+@
+
+\begin{plainenglish}[What that AIC table says]
+The plain Poisson is much the worst. Zero-inflating it helps a lot. But the plain
+negative binomial does nearly as well as the ZIP with far fewer parameters, and the
+ZINB is barely better than the NB. In other words: the ``excess zeros'' here were
+mostly just overdispersion in disguise.
+\end{plainenglish}
+
+\section{Hurdle models}
+
+A hurdle model splits the problem differently:
+
+\begin{enumerate}
+  \item \textbf{Did you clear the hurdle?} A binary model for zero versus non-zero.
+  \item \textbf{Given that you did, how far?} A \emph{zero-truncated} count model
+        for the positive values.
+\end{enumerate}
+
+The crucial difference: in a hurdle model \emph{all} zeros come from the first
+part. In a zero-inflated model, zeros can come from either part.
+
+<<hurdle-fit>>=
+hnb <- hurdle(art ~ fem + mar + kid5 + phd + ment | fem + mar + kid5 + phd + ment,
+              data = bioChemists, dist = "negbin")
+summary(hnb)
+@
+
+\begin{warningbox}[The sign convention flips]
+In \fn{zeroinfl}, the binary part models the probability of being a \emph{zero}. In
+\fn{hurdle}, it models the probability of being \emph{positive}. So the same
+predictor gets opposite signs in the two printouts. Check which function produced a
+table before interpreting its signs.
+\end{warningbox}
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.22\textwidth}p{0.37\textwidth}p{0.37\textwidth}@{}}
+\toprule
+ & \textbf{Zero-inflated} & \textbf{Hurdle} \\
+\midrule
+Where zeros come from & two sources: structural and sampling & one source only \\
+Binary part models    & $\Pr(\text{structural zero})$ & $\Pr(\text{count} > 0)$ \\
+Count part            & standard Poisson/NB           & zero-\emph{truncated} Poisson/NB \\
+Natural story         & a latent subgroup that can never have the event & a two-stage decision: first whether, then how much \\
+Can handle too \emph{few} zeros & no & yes \\
+Typical use           & ``never-smokers'' mixed in with smokers & doctor visits: first you decide to go, then how often \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{rulebox}
+If you can name the latent group that structurally cannot have the event, use
+zero-inflation. If the process is genuinely two decisions in sequence, use a
+hurdle. If neither story is convincing, you probably just have overdispersion ---
+use a negative binomial.
+\end{rulebox}
+
+\section{Which model reproduces the data best?}
+
+Forget the AIC table for a moment and just count what each model predicts.
+
+<<zero-compare>>=
+zeros_expected <- c(
+  observed = sum(bioChemists$art == 0),
+  poisson  = sum(dpois(0, fitted(mp))),
+  negbin   = sum(dnbinom(0, mu = fitted(mnb), size = mnb$theta)),
+  zip      = sum(predict(zip,  type = "prob")[, 1]),
+  zinb     = sum(predict(zinb, type = "prob")[, 1]),
+  hurdle   = sum(predict(hnb,  type = "prob")[, 1])
+)
+round(zeros_expected, 1)
+@
+
+Zero-inflated and hurdle models reproduce the zero count almost exactly --- they
+have a parameter dedicated to it, so that is guaranteed and not evidence of
+anything. The informative comparison is over the \emph{whole} distribution.
+
+<<zero-plot, fig.width=9.4, fig.height=4.2, out.width="\\textwidth", fig.cap="Left: expected frequency of each count under four models. Right: rootograms for the Poisson and the negative binomial. The Poisson misses the zeros badly; the negative binomial does not.">>=
+par(mfrow = c(1, 2)); par_book()
+maxk <- 10
+obs  <- as.numeric(table(factor(pmin(bioChemists$art, maxk), levels = 0:maxk)))
+e_p  <- sapply(0:maxk, function(k) sum(dpois(k, fitted(mp))))
+e_nb <- sapply(0:maxk, function(k) sum(dnbinom(k, mu = fitted(mnb), size = mnb$theta)))
+e_zi <- colSums(predict(zip,  type = "prob")[, 1:(maxk + 1)])
+e_hu <- colSums(predict(hnb,  type = "prob")[, 1:(maxk + 1)])
+
+plot(0:maxk, obs, type = "h", lwd = 6, col = adjustcolor(PAL["grey"], 0.5),
+     xlab = "articles published", ylab = "frequency",
+     main = "Observed vs expected frequencies")
+grid_book()
+lines(0:maxk, e_p,  lwd = 2.5, col = PAL["red"])
+lines(0:maxk, e_nb, lwd = 2.5, col = PAL["green"])
+lines(0:maxk, e_zi, lwd = 2.5, lty = 2, col = PAL["primary"])
+lines(0:maxk, e_hu, lwd = 2.5, lty = 3, col = PAL["accent"])
+legend("topright", bty = "n", cex = 0.75, lwd = c(6, 2.5, 2.5, 2.5, 2.5),
+       lty = c(1, 1, 1, 2, 3),
+       col = c(adjustcolor(PAL["grey"], 0.5), PAL["red"], PAL["green"],
+               PAL["primary"], PAL["accent"]),
+       legend = c("observed", "Poisson", "neg. binomial", "ZIP", "hurdle NB"))
+
+plot(c(-0.5, maxk + 0.5), c(-6, max(sqrt(e_p)) * 1.1), type = "n",
+     xlab = "articles published", ylab = expression(sqrt("frequency")),
+     main = "Rootograms: Poisson (red) vs NB (green)")
+grid_book()
+rect(0:maxk - 0.42, sqrt(e_p) - sqrt(obs), 0:maxk - 0.02, sqrt(e_p),
+     col = adjustcolor(PAL["red"], 0.35), border = "white")
+rect(0:maxk + 0.02, sqrt(e_nb) - sqrt(obs), 0:maxk + 0.42, sqrt(e_nb),
+     col = adjustcolor(PAL["green"], 0.35), border = "white")
+abline(h = 0, lwd = 2, col = PAL["grey"])
+lines(0:maxk, sqrt(e_p),  lwd = 2, col = PAL["red"])
+lines(0:maxk, sqrt(e_nb), lwd = 2, col = PAL["green"])
+@
+
+\section{The Vuong test, and why to be careful with it}
+
+The Vuong test compares two \emph{non-nested} models by looking at whether one
+assigns higher likelihood to the individual observations than the other.
+
+<<vuong, message=TRUE>>=
+vuong(zip, mp)      # zero-inflated Poisson vs plain Poisson
+@
+
+\begin{warningbox}[Do not use Vuong for zero-inflation versus its own base model]
+A zero-inflated Poisson \emph{contains} the Poisson as the special case $\pi = 0$,
+so the two are nested, not non-nested --- and $\pi = 0$ sits on the boundary of the
+parameter space. Vuong's theory assumes neither. Simulation studies find the test
+badly behaved for exactly this comparison, and it tends to favour the
+zero-inflated model too often. Use AIC/BIC and a rootogram instead. Vuong is
+legitimate for genuinely non-nested comparisons, such as ZIP versus hurdle-NB.
+\end{warningbox}
+
+<<vuong-ok, message=TRUE>>=
+vuong(zinb, hnb)    # ZINB vs hurdle-NB: genuinely non-nested, so this is fair
+@
+
+\section{A case with real zero-inflation}
+
+\fn{bioChemists} turned out not to need zero-inflation. Here is a dataset that
+does: boating trips taken in a year, where most respondents took none.
+
+<<rec-data>>=
+data(RecreationDemand, package = "AER")
+round(100 * mean(RecreationDemand$trips == 0), 1)       # percent zeros
+mp_r  <- glm(trips ~ quality + ski + income + userfee + costC + costS + costH,
+             family = poisson, data = RecreationDemand)
+mnb_r <- MASS::glm.nb(trips ~ quality + ski + income + userfee + costC + costS + costH,
+                      data = RecreationDemand)
+zinb_r <- zeroinfl(trips ~ quality + ski + income + userfee + costC + costS + costH |
+                   quality + income, data = RecreationDemand, dist = "negbin")
+hnb_r  <- hurdle(trips ~ quality + ski + income + userfee + costC + costS + costH |
+                 quality + income, data = RecreationDemand, dist = "negbin")
+
+round(c(observed = sum(RecreationDemand$trips == 0),
+        poisson  = sum(dpois(0, fitted(mp_r))),
+        negbin   = sum(dnbinom(0, mu = fitted(mnb_r), size = mnb_r$theta)),
+        zinb     = sum(predict(zinb_r, type = "prob")[, 1]),
+        hurdle   = sum(predict(hnb_r,  type = "prob")[, 1])), 1)
+round(c(AIC_pois = AIC(mp_r), AIC_nb = AIC(mnb_r),
+        AIC_zinb = AIC(zinb_r), AIC_hurdle = AIC(hnb_r)), 1)
+@
+
+Here the story is different: the zero-inflated and hurdle models are clearly better
+than the negative binomial on AIC, and only they get the zero count right. This is
+what a genuine need for zero-inflation looks like.
+
+\begin{keyidea}[The decision procedure]
+\begin{enumerate}
+  \item Fit Poisson. Count observed zeros against predicted zeros.
+  \item Fit negative binomial. Count again. Usually the shortfall is gone.
+  \item If a large shortfall \emph{remains}, and you can tell a story about a
+        structural-zero group, fit ZI or hurdle models.
+  \item Compare with AIC/BIC and, above all, with a rootogram.
+\end{enumerate}
+\end{keyidea}
+
+\begin{warningbox}[Zero-inflation is over-used]
+Many published zero-inflated models were fitted because someone saw a lot of zeros
+and stopped there. Lots of zeros is completely normal for a count with a small
+mean --- a Poisson with mean 0.5 produces 61\% zeros all by itself. The question is
+never ``are there many zeros?'' but ``are there more zeros \emph{than my model
+predicts}?''
+\end{warningbox}
+
+<<zeros-normal>>=
+round(sapply(c(0.5, 1, 2, 5), function(m) dpois(0, m)), 3)   # % zeros by Poisson mean
+@

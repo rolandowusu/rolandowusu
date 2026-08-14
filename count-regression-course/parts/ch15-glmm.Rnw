@@ -1,0 +1,306 @@
+\chapter{Mixed models II: GLMMs for binary and count data}
+
+A generalised linear mixed model is exactly what its name says: a GLM (Chapter 2)
+plus random effects (Chapter 14). The linear predictor gains a random term:
+\[
+g(\mu_{ij}) = \underbrace{\beta_0 + \beta_1 x_{ij}}_{\text{fixed}}
+            + \underbrace{u_j}_{\text{random}}, \qquad u_j \sim N(0, \sigma_u^2).
+\]
+Everything you know about links and families carries straight over.
+
+\section{Binomial GLMM}
+
+Back to the \fn{cbpp} data from Chapter 4: disease incidence in 15 herds of
+Ethiopian cattle over four time periods. Herds differ, and we could not fix the
+resulting overdispersion properly with quasi-binomial. Now we can.
+
+<<cbpp-glmm>>=
+library(lme4)
+data(cbpp)
+m_glm  <- glm(cbind(incidence, size - incidence) ~ period,
+              family = binomial, data = cbpp)
+m_glmm <- glmer(cbind(incidence, size - incidence) ~ period + (1 | herd),
+                family = binomial, data = cbpp)
+summary(m_glmm)
+@
+
+<<cbpp-compare>>=
+round(cbind(
+  est_glm  = coef(m_glm),
+  est_glmm = fixef(m_glmm),
+  se_glm   = coef(summary(m_glm))[, 2],
+  se_glmm  = coef(summary(m_glmm))[, 2]
+), 4)
+anova(m_glmm, m_glm)                 # is the herd random effect needed?
+@
+
+\begin{keyidea}
+The herd variance is
+\Sexpr{round(as.data.frame(VarCorr(m_glmm))$vcov[1], 3)} on the logit scale, and
+the likelihood-ratio test says it is clearly needed. Notice the coefficients
+changed slightly and the standard errors grew: exactly the correction that the
+quasi-binomial approximated, but now with an interpretable variance component
+attached.
+\end{keyidea}
+
+\subsection{ICC for a binomial GLMM}
+
+The residual variance is not free on the logit scale --- it is fixed at
+$\pi^2/3 \approx 3.29$, the variance of the standard logistic distribution. So:
+
+<<cbpp-icc>>=
+sig2_herd <- as.data.frame(VarCorr(m_glmm))$vcov[1]
+icc <- sig2_herd / (sig2_herd + pi^2 / 3)
+round(c(herd_variance = sig2_herd, latent_residual = pi^2/3, ICC = icc), 4)
+@
+
+About \Sexpr{round(100*icc)}\% of the variation on the latent scale is between
+herds. That is substantial, and it is why treating cows as independent would have
+been badly wrong.
+
+<<cbpp-plot, fig.width=9.4, fig.height=4, out.width="\\textwidth", fig.cap="Left: observed incidence proportions by herd and period. Right: herd-level random intercepts with prediction intervals; herds well above zero had consistently more disease than the fixed effects alone predict.">>=
+par(mfrow = c(1, 2)); par_book()
+cbpp$prop <- cbpp$incidence / cbpp$size
+plot(as.integer(cbpp$period) + runif(nrow(cbpp), -0.15, 0.15), cbpp$prop,
+     pch = 21, bg = adjustcolor(PAL["primary"], 0.5), col = "white",
+     cex = 0.6 + 2 * cbpp$size / max(cbpp$size), xaxt = "n",
+     xlab = "period", ylab = "observed proportion infected",
+     main = "Raw data (point size = herd size)")
+axis(1, at = 1:4); grid_book()
+pp <- predict(m_glmm, newdata = data.frame(period = factor(1:4)),
+              re.form = NA, type = "response")
+lines(1:4, pp, lwd = 3, col = PAL["accent"])
+
+re  <- ranef(m_glmm, condVar = TRUE)$herd
+sds <- sqrt(attr(ranef(m_glmm, condVar = TRUE)$herd, "postVar")[1, 1, ])
+o   <- order(re[, 1])
+plot(re[o, 1], seq_along(o), pch = 19, col = PAL["primary"], cex = 1.2, yaxt = "n",
+     xlim = range(re[, 1] + 2 * sds, re[, 1] - 2 * sds),
+     xlab = "herd random intercept (log-odds)", ylab = "",
+     main = "Herd effects (caterpillar plot)")
+axis(2, at = seq_along(o), labels = rownames(re)[o], las = 1, cex.axis = 0.6)
+grid_book(); abline(v = 0, lty = 2, col = PAL["red"], lwd = 2)
+arrows(re[o, 1] - 1.96 * sds[o], seq_along(o), re[o, 1] + 1.96 * sds[o],
+       seq_along(o), code = 3, angle = 90, length = 0.02, col = PAL["primary"])
+@
+
+\section{Poisson GLMM}
+
+The \fn{grouseticks} data counts ticks on red grouse chicks. Chicks are in broods,
+broods are on locations --- two levels of nesting.
+
+<<grouse-fit>>=
+data(grouseticks)
+grouseticks$cHEIGHT <- scale(grouseticks$HEIGHT, scale = FALSE)   # centre it
+gp <- glmer(TICKS ~ cHEIGHT + YEAR + (1 | BROOD) + (1 | LOCATION),
+            family = poisson, data = grouseticks)
+summary(gp)
+@
+
+<<grouse-varcomp>>=
+print(VarCorr(gp), comp = "Variance")
+## Is there still overdispersion left over?
+overdisp_glmm <- function(model) {
+  rp <- residuals(model, type = "pearson")
+  rdf <- nobs(model) - length(fixef(model)) -
+         length(unlist(lapply(lme4::VarCorr(model), function(z) z[lower.tri(z, TRUE)])))
+  X2 <- sum(rp^2)
+  c(chisq = X2, df = rdf, ratio = X2 / rdf,
+    p = pchisq(X2, rdf, lower.tail = FALSE))
+}
+round(overdisp_glmm(gp), 4)
+@
+
+Even with two random effects the dispersion is
+\Sexpr{round(overdisp_glmm(gp)["ratio"], 1)} --- there is extra variability
+\emph{between individual chicks}, not just between broods and locations.
+
+\section{Observation-level random effects}
+
+The trick: give every single observation its own random effect. That makes the
+model a Poisson--lognormal mixture, which absorbs any leftover overdispersion.
+
+<<olre>>=
+grouseticks$obs <- factor(seq_len(nrow(grouseticks)))
+gp_olre <- glmer(TICKS ~ cHEIGHT + YEAR + (1 | BROOD) + (1 | LOCATION) + (1 | obs),
+                 family = poisson, data = grouseticks)
+round(c(AIC_plain = AIC(gp), AIC_olre = AIC(gp_olre)), 1)
+print(VarCorr(gp_olre), comp = "Variance")
+round(overdisp_glmm(gp_olre), 4)
+@
+
+An improvement of \Sexpr{round(AIC(gp) - AIC(gp_olre))} AIC points, and the
+dispersion is now near 1.
+
+\begin{plainenglish}[Why an observation-level random effect works]
+It says: on top of everything the model already knows, each chick has its own
+random multiplier on its tick rate. That is precisely the ``unobserved
+heterogeneity'' story from Chapter 7 --- but with a lognormal mixing distribution
+instead of a gamma one, which is what makes it fit naturally inside a GLMM.
+\end{plainenglish}
+
+\begin{warningbox}[OLRE needs enough data]
+With small counts and few observations per group, an observation-level random
+effect can be weakly identified and \fn{glmer} may struggle to converge. If it
+does, use a negative binomial GLMM instead --- it does the same job with a
+different mixing distribution and usually fits more easily.
+\end{warningbox}
+
+\section{Negative binomial GLMM}
+
+Two routes. \fn{glmer.nb} in \pkg{lme4}, and \fn{glmmTMB}, which is faster and far
+more flexible.
+
+<<nb-glmm>>=
+library(glmmTMB)
+gnb <- glmmTMB(TICKS ~ cHEIGHT + YEAR + (1 | BROOD) + (1 | LOCATION),
+               family = nbinom2, data = grouseticks)
+summary(gnb)
+@
+
+<<nb-glmm-compare>>=
+round(c(poisson_glmm = AIC(gp), olre = AIC(gp_olre), negbin_glmm = AIC(gnb)), 1)
+@
+
+\begin{rulebox}[Choosing between OLRE and NB GLMM]
+They solve the same problem with different mixing distributions --- lognormal
+versus gamma --- and usually give very similar answers. Prefer the negative
+binomial GLMM: it fits faster, converges more reliably, gives you $\theta$ as an
+interpretable number, and extends cleanly to zero-inflation. Use OLRE when you want
+to stay inside \pkg{lme4} or when you need the observation-level effects
+themselves.
+\end{rulebox}
+
+\section{Zero-inflated GLMM}
+
+\pkg{glmmTMB} handles zero-inflation and random effects together --- something
+\pkg{pscl} cannot do.
+
+<<zi-glmm>>=
+data(epil, package = "MASS")
+epil$lbase <- log(epil$base / 4)
+epil$lage  <- log(epil$age)
+
+m_pois_re <- glmmTMB(y ~ lbase + trt + lage + (1 | subject),
+                     family = poisson, data = epil)
+m_nb_re   <- glmmTMB(y ~ lbase + trt + lage + (1 | subject),
+                     family = nbinom2, data = epil)
+m_zi_re   <- glmmTMB(y ~ lbase + trt + lage + (1 | subject),
+                     ziformula = ~ 1, family = nbinom2, data = epil)
+round(c(poisson_re = AIC(m_pois_re), negbin_re = AIC(m_nb_re),
+        zi_negbin_re = AIC(m_zi_re)), 1)
+@
+
+Adding zero-inflation buys nothing here (AIC barely moves, and the extra parameter
+costs 2 points), which tells you these seizure counts have no structural-zero
+group. That is a genuinely useful negative result.
+
+<<epil-final>>=
+summary(m_nb_re)
+@
+
+<<epil-irr>>=
+ci <- confint(m_nb_re, parm = "beta_")
+round(exp(ci), 3)
+@
+
+\begin{keyidea}[The reportable result]
+``Adjusting for baseline seizure rate and age, progabide was associated with an
+incidence rate ratio of
+\Sexpr{round(exp(fixef(m_nb_re)$cond["trtprogabide"]), 2)}
+(95\% CI \Sexpr{round(exp(ci)["trtprogabide", 1], 2)}--\Sexpr{round(exp(ci)["trtprogabide", 2], 2)}),
+from a negative binomial mixed model with a random intercept per patient.'' The
+interval excludes 1, but only just, so this is weak evidence of a reduction in
+seizure rate rather than a firm finding.
+\end{keyidea}
+
+Compare that with what you would have concluded from the naive Poisson GLM of
+Chapter 6, which ignored the repeated measurements entirely:
+
+<<epil-naive-compare>>=
+naive <- glm(y ~ lbase + trt + lage, family = poisson, data = epil)
+round(rbind(
+  naive_poisson_glm = c(IRR = exp(coef(naive)["trtprogabide"]),
+                        exp(confint.default(naive)["trtprogabide", ])),
+  negbin_mixed      = c(IRR = exp(fixef(m_nb_re)$cond["trtprogabide"]),
+                        exp(ci["trtprogabide", 1:2]))
+), 3)
+@
+
+Same point estimate, an interval roughly
+\Sexpr{round((diff(exp(ci["trtprogabide", 1:2])) / diff(exp(confint.default(naive)["trtprogabide", ]))), 1)}
+times wider. The naive model was not wrong about the effect; it was wrong about how
+sure we should be.
+
+\section{Predicting from a GLMM}
+
+The single most confusing part of GLMMs. There are two different predictions and
+they answer different questions.
+
+<<glmm-predict>>=
+nd <- data.frame(period = factor(1:4), herd = "1")
+
+## Conditional: "for THIS herd"
+round(predict(m_glmm, newdata = nd, type = "response"), 4)
+
+## Marginal-ish: "for a typical herd, random effect set to zero"
+round(predict(m_glmm, newdata = nd, re.form = NA, type = "response"), 4)
+@
+
+\begin{warningbox}[\fn{re.form = NA} is not the population average]
+Setting the random effect to zero gives you the prediction for a herd with an
+\emph{average latent value}, not the average prediction across herds. Because the
+inverse link is non-linear, those differ --- and the gap grows with the random
+effect variance. Chapter 16 explains this properly and shows how to get a true
+population average.
+\end{warningbox}
+
+<<glmm-newlevel>>=
+## Predicting for a herd that was never observed: allow.new.levels
+predict(m_glmm, newdata = data.frame(period = factor(1), herd = "brand_new"),
+        allow.new.levels = TRUE, type = "response")
+@
+
+\section{Simulating from a GLMM to check it}
+
+<<glmm-check, fig.width=7.2, fig.height=4, out.width="0.82\\textwidth", fig.cap="Simulating 300 datasets from the negative binomial GLMM and comparing the proportion of zeros and the maximum count with what was observed. Both observed values sit comfortably inside the simulated distributions.">>=
+set.seed(4)
+sims <- simulate(m_nb_re, nsim = 300)
+p0   <- sapply(sims, function(z) mean(z == 0))
+mx   <- sapply(sims, function(z) max(z))
+par(mfrow = c(1, 2)); par_book()
+hist(p0, breaks = 25, col = adjustcolor(PAL["primary"], 0.55), border = "white",
+     xlab = "proportion of zeros", main = "Zeros: simulated vs observed")
+abline(v = mean(epil$y == 0), lwd = 3, col = PAL["red"])
+hist(mx, breaks = 25, col = adjustcolor(PAL["primary"], 0.55), border = "white",
+     xlab = "maximum count", main = "Maximum: simulated vs observed")
+abline(v = max(epil$y), lwd = 3, col = PAL["red"])
+@
+
+\section{A summary of the GLMM toolkit}
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.30\textwidth}p{0.32\textwidth}p{0.34\textwidth}@{}}
+\toprule
+\textbf{Model} & \textbf{lme4} & \textbf{glmmTMB} \\
+\midrule
+Linear mixed        & \fn{lmer(y \textasciitilde{} x + (1|g))} & \fn{glmmTMB(y \textasciitilde{} x + (1|g))} \\
+Logistic mixed      & \fn{glmer(\dots, binomial)} & \fn{family = binomial} \\
+Poisson mixed       & \fn{glmer(\dots, poisson)}  & \fn{family = poisson} \\
+Negative binomial mixed & \fn{glmer.nb(\dots)}    & \fn{family = nbinom2} (or \fn{nbinom1}) \\
+Beta-binomial mixed & not available               & \fn{family = betabinomial} \\
+Zero-inflated mixed & not available               & \fn{ziformula = \textasciitilde{} 1} \\
+Hurdle mixed        & not available               & \fn{family = truncated\_nbinom2} \\
+Overdispersed Poisson & \fn{+ (1|obs)} (OLRE)     & \fn{family = nbinom2} \\
+Spatial / temporal correlation & not available    & \fn{ou()}, \fn{ar1()}, \fn{exp()} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{rulebox}
+Learn \pkg{lme4} first --- it is the standard and its syntax is everywhere. Move to
+\pkg{glmmTMB} the moment you need a negative binomial, zero-inflation, a
+beta-binomial, or correlation structures. The formula syntax is identical, so
+switching costs you nothing.
+\end{rulebox}

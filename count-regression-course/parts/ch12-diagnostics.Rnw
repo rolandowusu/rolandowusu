@@ -1,0 +1,253 @@
+\chapter{Checking a count model}
+
+Residual plots that work for \fn{lm} are close to useless for count models. With a
+fitted mean of 2, the residual can only be $-2, -1, 0, 1, 2, \dots$, so the plot
+shows a set of diagonal stripes and you learn nothing. This chapter gives you
+residuals and plots that actually work.
+
+<<ch12-setup, echo=FALSE>>=
+data(quine, package = "MASS")
+m_pois <- glm(Days ~ Eth + Sex + Age + Lrn, family = poisson, data = quine)
+m_nb   <- MASS::glm.nb(Days ~ Eth + Sex + Age + Lrn, data = quine)
+@
+
+\section{The four kinds of residual}
+
+<<resid-types>>=
+r_resp <- residuals(m_nb, type = "response")   # y - mu
+r_pear <- residuals(m_nb, type = "pearson")    # (y - mu) / sqrt(V(mu))
+r_dev  <- residuals(m_nb, type = "deviance")   # signed sqrt of deviance contribution
+r_work <- residuals(m_nb, type = "working")    # used internally by the fitting algorithm
+round(head(cbind(response = r_resp, pearson = r_pear,
+                 deviance = r_dev, working = r_work), 4), 3)
+@
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.20\textwidth}p{0.40\textwidth}p{0.36\textwidth}@{}}
+\toprule
+\textbf{Type} & \textbf{Definition} & \textbf{Use it for} \\
+\midrule
+Response  & $y - \hat\mu$ & Almost nothing; scale depends on $\mu$ \\
+Pearson   & $(y - \hat\mu)/\sqrt{V(\hat\mu)}$ & Dispersion; squared and summed it gives $X^2$ \\
+Deviance  & signed $\sqrt{d_i}$ & \R's default; the most symmetric of the classical ones \\
+Quantile  & simulation-based (below) & Everything else --- this is the one to use \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+None of the first three is normally distributed for count data, so a normal
+Q--Q plot of them is misleading.
+
+<<resid-stripes, fig.width=9.4, fig.height=3.8, out.width="\\textwidth", fig.cap="Deviance residuals against fitted values for a count model. The diagonal stripes are the discreteness of the outcome, not a model failure -- which is exactly why these plots are so hard to read.">>=
+par(mfrow = c(1, 2)); par_book()
+plot(fitted(m_nb), r_dev, pch = 21, bg = adjustcolor(PAL["primary"], 0.35),
+     col = "white", cex = 1.1, xlab = "fitted mean", ylab = "deviance residual",
+     main = "Deviance residuals: stripey and hard to read")
+grid_book(); abline(h = 0, col = PAL["grey"], lwd = 1.5)
+lines(lowess(fitted(m_nb), r_dev), col = PAL["red"], lwd = 2.5)
+
+qqnorm(r_dev, pch = 21, bg = adjustcolor(PAL["primary"], 0.35), col = "white",
+       cex = 1.1, main = "Normal Q-Q of deviance residuals")
+qqline(r_dev, col = PAL["red"], lwd = 2.5); grid_book()
+@
+
+\section{Randomised quantile residuals: the tool that works}
+
+The idea is beautiful. If the model is correct, then for each observation the
+value $F(y_i;\hat\mu_i)$ --- the model's own cumulative probability at the observed
+value --- should be uniform on $(0,1)$. For discrete data $F$ jumps, so we draw a
+uniform value \emph{within} the jump. Push the result through \fn{qnorm} and, if
+the model is right, you get residuals that are exactly standard normal --- however
+discrete the outcome is.
+
+<<qres-fn>>=
+qresid <- function(y, pfun, ...) {
+  a <- pfun(y - 1, ...)          # CDF just below the observed value
+  b <- pfun(y,     ...)          # CDF at the observed value
+  u <- runif(length(y), pmin(a, b), pmax(a, b))
+  qnorm(pmin(pmax(u, 1e-10), 1 - 1e-10))
+}
+set.seed(101)
+q_pois <- qresid(quine$Days, ppois,   lambda = fitted(m_pois))
+q_nb   <- qresid(quine$Days, pnbinom, mu = fitted(m_nb), size = m_nb$theta)
+round(c(sd_qres_poisson = sd(q_pois), sd_qres_negbin = sd(q_nb)), 3)
+@
+
+If the model fits, those standard deviations should be near 1. The Poisson's is
+\Sexpr{round(sd(q_pois), 2)}; the negative binomial's is \Sexpr{round(sd(q_nb), 2)}.
+
+<<qres-plots, fig.width=9.4, fig.height=6.4, out.width="\\textwidth", fig.cap="Randomised quantile residuals. Top row: the Poisson model -- the Q-Q plot bends away from the line and the residuals fan out. Bottom row: the negative binomial -- points on the line, no pattern against the fitted values. This is what a good count model looks like.">>=
+par(mfrow = c(2, 2)); par_book()
+for (nm in c("Poisson", "Negative binomial")) {
+  qr <- if (nm == "Poisson") q_pois else q_nb
+  ft <- if (nm == "Poisson") fitted(m_pois) else fitted(m_nb)
+  cl <- if (nm == "Poisson") PAL["red"] else PAL["green"]
+
+  qqnorm(qr, pch = 21, bg = adjustcolor(cl, 0.45), col = "white", cex = 1.1,
+         main = paste(nm, ": Q-Q of quantile residuals"))
+  qqline(qr, col = PAL["primary"], lwd = 2.5); grid_book()
+
+  plot(ft, qr, pch = 21, bg = adjustcolor(cl, 0.45), col = "white", cex = 1.1,
+       log = "x", xlab = "fitted mean (log scale)", ylab = "quantile residual",
+       ylim = c(-4, 4), main = paste(nm, ": residuals vs fitted"))
+  grid_book(); abline(h = c(-2, 0, 2), lty = c(3, 1, 3), col = PAL["grey"], lwd = 1.5)
+  lines(lowess(ft, qr), col = PAL["primary"], lwd = 2.5)
+}
+@
+
+\begin{keyidea}[What to look for in a quantile-residual plot]
+\textbf{Q--Q plot:} points on the diagonal. Bending up at the right means the model
+under-predicts the tail. \\
+\textbf{Residuals vs fitted:} a flat cloud between roughly $-2$ and $2$, with the
+smoother near zero. A trend means the mean model is wrong; a funnel means the
+variance function is wrong. \\
+\textbf{Residuals vs each predictor:} the same, one plot per predictor. This is
+where you find a missing quadratic term.
+\end{keyidea}
+
+The \pkg{DHARMa} package automates all of this with a simulation-based version of
+the same idea, and is worth installing for serious work:
+\fn{DHARMa::simulateResiduals(model)} followed by \fn{plot()}.
+
+\section{Simulation-based checks you can always do}
+
+Even without any package, you can ask: \emph{if my model were true, what would data
+from it look like?} Simulate from the fitted model and compare summaries with the
+real data.
+
+<<posterior-check, fig.width=9.4, fig.height=3.8, out.width="\\textwidth", fig.cap="Simulating 500 datasets from each fitted model and comparing three summary statistics with the observed values (red lines). The Poisson cannot produce data as variable or as extreme as what was observed; the negative binomial can.">>=
+set.seed(5)
+sim_stats <- function(model, nsim = 500) {
+  s <- simulate(model, nsim = nsim)
+  data.frame(sd = apply(s, 2, sd),
+             max = apply(s, 2, max),
+             p_over20 = apply(s, 2, function(z) mean(z > 20)))
+}
+sp <- sim_stats(m_pois); sn <- sim_stats(m_nb)
+obs <- c(sd = sd(quine$Days), max = max(quine$Days), p_over20 = mean(quine$Days > 20))
+
+par(mfrow = c(1, 3)); par_book()
+for (v in c("sd", "max", "p_over20")) {
+  ttl <- c(sd = "standard deviation", max = "maximum",
+           p_over20 = "proportion above 20")[v]
+  rng <- range(c(sp[[v]], sn[[v]], obs[v]))
+  hist(sn[[v]], breaks = 25, col = adjustcolor(PAL["green"], 0.5), border = "white",
+       xlim = rng, xlab = ttl, main = ttl, freq = FALSE)
+  hist(sp[[v]], breaks = 25, col = adjustcolor(PAL["red"], 0.45), border = "white",
+       add = TRUE, freq = FALSE)
+  abline(v = obs[v], lwd = 3, col = PAL["primary"])
+}
+@
+
+<<ppc-numbers>>=
+round(rbind(
+  observed = obs,
+  poisson_mean = colMeans(sp),
+  negbin_mean  = colMeans(sn),
+  poisson_pvalue = colMeans(sweep(sp, 2, obs, ">=")),
+  negbin_pvalue  = colMeans(sweep(sn, 2, obs, ">="))
+), 3)
+@
+
+\begin{plainenglish}[Reading those ``p-values'']
+Each is the proportion of simulated datasets whose statistic was at least as large
+as the observed one. Values very close to 0 or 1 mean the model cannot reproduce
+that feature of your data. Values in the middle mean it can. The Poisson fails on
+all three; the negative binomial is comfortable.
+\end{plainenglish}
+
+\section{Is the variance function right?}
+
+Bin the fitted values, and within each bin compare the observed variance with what
+each model claims it should be.
+
+<<variance-check, fig.width=7.2, fig.height=4.2, out.width="0.82\\textwidth", fig.cap="Observed variance within bins of fitted value, against the variance each model assumes. The negative binomial's quadratic variance function tracks the data; the Poisson's identity line does not.">>=
+par_book()
+b   <- cut(fitted(m_nb), breaks = quantile(fitted(m_nb), seq(0, 1, 0.125)),
+           include.lowest = TRUE)
+mb_ <- tapply(quine$Days, b, mean)
+vb  <- tapply(quine$Days, b, var)
+plot(mb_, vb, pch = 19, cex = 1.5, col = PAL["primary"], log = "xy",
+     xlab = "observed mean in bin", ylab = "observed variance in bin",
+     main = "Which variance function matches the data?")
+grid_book()
+mu <- seq(min(mb_) * 0.8, max(mb_) * 1.2, length.out = 100)
+lines(mu, mu, lwd = 2.5, col = PAL["red"])
+lines(mu, mu + mu^2 / m_nb$theta, lwd = 2.5, col = PAL["green"])
+phi <- sum(residuals(m_pois, type = "pearson")^2) / df.residual(m_pois)
+lines(mu, phi * mu, lwd = 2.5, lty = 2, col = PAL["accent"])
+legend("topleft", bty = "n", cex = 0.75, lwd = 2.5, lty = c(1, 1, 2),
+       col = c(PAL["red"], PAL["green"], PAL["accent"]),
+       legend = c("Poisson: mu", "NB: mu + mu^2/theta", "quasi-Poisson: phi*mu"))
+@
+
+\section{Influence and outliers}
+
+<<influence, fig.width=9.4, fig.height=3.8, out.width="\\textwidth", fig.cap="Left: Cook's distance flags observations that move the coefficients. Right: how much each coefficient shifts when a single observation is dropped, standardised (dfbeta).">>=
+par(mfrow = c(1, 2)); par_book()
+cd <- cooks.distance(m_nb)
+plot(cd, type = "h", lwd = 2, col = PAL["primary"], xlab = "observation",
+     ylab = "Cook's distance", main = "Influence on the fit")
+grid_book(); abline(h = 4 / nrow(quine), lty = 2, col = PAL["red"])
+big <- which(cd > 4 / nrow(quine))
+text(big, cd[big], labels = big, pos = 3, cex = 0.6, col = PAL["red"])
+
+dfb <- dfbeta(m_nb)
+matplot(dfb[, -1], type = "l", lty = 1, lwd = 1.6,
+        col = c(PAL["primary"], PAL["accent"], PAL["green"], PAL["red"], PAL["purple"]),
+        xlab = "observation", ylab = "change in coefficient",
+        main = "dfbeta: influence on each coefficient")
+grid_book(); abline(h = 0, col = PAL["grey"])
+legend("topleft", bty = "n", cex = 0.6, lty = 1, lwd = 1.6,
+       col = c(PAL["primary"], PAL["accent"], PAL["green"], PAL["red"], PAL["purple"]),
+       legend = colnames(dfb)[-1])
+@
+
+<<refit-without>>=
+worst <- which.max(cd)
+c(observation = worst, days = quine$Days[worst], fitted = round(fitted(m_nb)[worst], 1))
+round(cbind(with_all = coef(m_nb),
+            without_worst = coef(update(m_nb, data = quine[-worst, ]))), 4)
+@
+
+\begin{rulebox}[What to do with an influential point]
+Do not delete it because it is influential. Look at it. If it is a data-entry error,
+fix it. If it is real, either keep it and report that the model is sensitive to it,
+or use a model that accommodates it --- which for counts usually means a
+longer-tailed distribution rather than deletion.
+\end{rulebox}
+
+\section{A checklist you can run every time}
+
+<<check-fn>>=
+check_count_model <- function(model, y, theta = NULL) {
+  mu  <- fitted(model)
+  X2  <- sum(residuals(model, type = "pearson")^2)
+  df  <- df.residual(model)
+  p0  <- if (is.null(theta)) dpois(0, mu) else dnbinom(0, mu = mu, size = theta)
+  data.frame(
+    dispersion       = round(X2 / df, 3),
+    dispersion_p     = signif(pchisq(X2, df, lower.tail = FALSE), 3),
+    zeros_observed   = sum(y == 0),
+    zeros_expected   = round(sum(p0), 1),
+    max_observed     = max(y),
+    mean_observed    = round(mean(y), 2),
+    mean_fitted      = round(mean(mu), 2)
+  )
+}
+rbind(poisson = check_count_model(m_pois, quine$Days),
+      negbin  = check_count_model(m_nb, quine$Days, theta = m_nb$theta))
+@
+
+\begin{keyidea}[The five checks, in order]
+\begin{enumerate}
+  \item Dispersion statistic near 1?
+  \item Predicted zeros $\approx$ observed zeros?
+  \item Quantile-residual Q--Q plot on the line?
+  \item Quantile residuals flat against fitted values \emph{and} against every
+        predictor?
+  \item Rootogram bars touching zero?
+\end{enumerate}
+Pass all five and your count model is defensible.
+\end{keyidea}

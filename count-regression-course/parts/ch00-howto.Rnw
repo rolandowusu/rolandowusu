@@ -1,0 +1,151 @@
+\chapter*{How to use this book}
+\addcontentsline{toc}{chapter}{How to use this book}
+\markboth{How to use this book}{}
+\setcounter{secnumdepth}{-1}
+
+\section{What this book is}
+
+This is a working guide to the family of regression models you reach for when your
+outcome is \emph{not} a nice continuous measurement: yes/no outcomes, counts of
+events, rates per unit of exposure, and any of those measured repeatedly on the
+same people, animals, schools or clinics.
+
+Everything is explained twice. Once in plain words, with a picture or an analogy.
+Once in \R{} code that you can copy, run, and change. Every number and every plot
+in this book was produced by actually running the code shown next to it, so what
+you see on the page is what you will see in your console.
+
+\begin{plainenglish}[The one-sentence summary of the whole book]
+Ordinary linear regression assumes your outcome is a continuous number that can
+wander anywhere and whose wobble is the same everywhere; when the outcome is a
+yes/no or a count, both of those assumptions break, and this book is about the
+family of models that fix them.
+\end{plainenglish}
+
+\section{Who it is for}
+
+You should be comfortable with:
+
+\begin{itemize}
+  \item ordinary linear regression (\fn{lm}) --- what a slope means, what a
+        $p$-value is, what a residual is;
+  \item basic \R{} --- reading in data, \fn{data.frame}, \fn{\$}, \fn{summary}.
+\end{itemize}
+
+You do \emph{not} need calculus, matrix algebra, or any prior exposure to
+generalised linear models. Where mathematics appears it is there to pin down an
+idea that is already explained in words, and you can skip it on a first read
+without losing the thread.
+
+\section{How the chapters fit together}
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.06\textwidth}p{0.30\textwidth}p{0.56\textwidth}@{}}
+\toprule
+\textbf{Ch} & \textbf{Topic} & \textbf{What you get out of it} \\
+\midrule
+1  & The big picture           & A decision tree: which model for which outcome \\
+2  & GLM anatomy               & The three moving parts every model here shares \\
+3--4 & Logistic regression      & Yes/no outcomes, odds ratios, ROC, calibration \\
+5--6 & Poisson regression       & Counts, rate ratios, offsets and exposure \\
+7  & Overdispersion            & The single most common problem with count models \\
+8  & Quasi-likelihood \& robust SEs & The quickest repair for overdispersion \\
+9  & Negative binomial         & The proper likelihood-based repair \\
+10 & Zero-inflation \& hurdles & When there are far too many zeros \\
+11 & Other count models        & Truncation, underdispersion, ordinal, GAMs \\
+12 & Model checking            & Residuals that actually work for counts \\
+13 & Tests                     & LRT, Wald, score, AIC/BIC, Vuong \\
+14--15 & Mixed models          & Repeated measures and clustering; GLMMs \\
+16 & Marginal vs.\ conditional & Why GLMM and GEE give different numbers \\
+17 & Convergence problems      & What the scary warnings mean and how to fix them \\
+18 & A complete worked analysis & Everything applied end-to-end \\
+19 & Cheat sheets              & Tables to keep beside you while you work \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+If you are in a hurry and you have count data, read Chapters 5, 7, 9 and 12. That
+is the shortest path to a defensible analysis.
+
+\section{Setting up \R}
+
+Install the packages once:
+
+<<install-pkgs, eval=FALSE>>=
+install.packages(c("MASS", "lme4", "glmmTMB", "pscl", "AER",
+                   "lmtest", "sandwich", "car", "emmeans", "ggplot2"))
+@
+
+and load the ones we use constantly:
+
+<<load-pkgs, message=FALSE, warning=FALSE>>=
+library(MASS)      # glm.nb(), and several teaching datasets
+library(lme4)      # glmer(), lmer() for mixed models
+library(glmmTMB)   # negative binomial / zero-inflated mixed models
+library(pscl)      # zeroinfl(), hurdle()
+library(AER)       # dispersiontest()
+library(lmtest)    # coeftest(), lrtest()
+library(sandwich)  # robust standard errors
+@
+
+\begin{plainenglish}[What each package is for, in one line each]
+\pkg{MASS} adds the negative binomial. \pkg{lme4} adds random effects.
+\pkg{glmmTMB} does both at once and adds zero-inflation. \pkg{pscl} does
+zero-inflated and hurdle models without random effects. \pkg{AER} gives you a
+formal overdispersion test. \pkg{lmtest} and \pkg{sandwich} give you likelihood-ratio
+tests and robust standard errors.
+\end{plainenglish}
+
+\section{The datasets used in this book}
+
+All of these ship with \R{} or with one of the packages above, so you can run
+every example without downloading anything.
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.20\textwidth}p{0.11\textwidth}p{0.32\textwidth}p{0.29\textwidth}@{}}
+\toprule
+\textbf{Dataset} & \textbf{Package} & \textbf{Outcome variable} & \textbf{Used for} \\
+\midrule
+\fn{birthwt}          & MASS     & low birth weight (0/1)               & logistic regression \\
+\fn{cbpp}             & lme4     & cases out of herd size               & binomial GLMM \\
+\fn{quine}            & MASS     & days absent (count)                  & overdispersion, NB \\
+\fn{warpbreaks}       & datasets & breaks (count)                       & Poisson basics \\
+\fn{bioChemists}      & pscl     & articles published (count)           & zero-inflation, hurdles \\
+\fn{RecreationDemand} & AER      & boating trips (count)                & extreme zero-inflation \\
+\fn{epil}             & MASS     & seizures (count, repeated)           & count mixed models \\
+\fn{grouseticks}      & lme4     & ticks on chicks (count, nested)      & Poisson GLMM + OLRE \\
+\fn{sleepstudy}       & lme4     & reaction time (repeated)             & linear mixed models \\
+\fn{InsectSprays}     & datasets & insects counted (count)              & simple Poisson \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{A note on reproducibility}
+
+Anywhere this book simulates data, a seed is set first, so you will get exactly
+the numbers printed here:
+
+<<seed-demo>>=
+set.seed(2024)
+rpois(8, lambda = 3)
+@
+
+\section{Conventions}
+
+\begin{itemize}
+  \item Code appears in shaded boxes; output lines begin with \verb|#>|.
+  \item Blue boxes translate an idea into plain English.
+  \item Green boxes hold the key idea you should remember.
+  \item Amber boxes hold rules of thumb --- useful, but not laws.
+  \item Red boxes are mistakes people really make. Read those twice.
+\end{itemize}
+
+\begin{keyidea}[Try this]
+Do not just read the code. Change a number in it, re-run it, and see what moves.
+Almost everything in this book was learned by somebody breaking a model and then
+working out why it broke.
+\end{keyidea}
+
+\setcounter{secnumdepth}{2}

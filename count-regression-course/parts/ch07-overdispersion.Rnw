@@ -1,0 +1,314 @@
+\chapter{Overdispersion}
+
+If you remember one chapter from this book, make it this one. Overdispersion is
+the default state of real count data, and ignoring it produces confident,
+publishable, wrong conclusions.
+
+\section{What it is}
+
+The Poisson model insists that
+\[
+\Var(Y \mid x) = \E(Y \mid x) = \mu.
+\]
+\textbf{Overdispersion} means the data are more variable than that:
+\[
+\Var(Y \mid x) = \phi \mu, \qquad \phi > 1.
+\]
+$\phi$ is the \emph{dispersion parameter}. If $\phi = 1$ the Poisson is fine. If
+$\phi = 3$, your data bounce around three times as much as the Poisson allows.
+
+\begin{plainenglish}[The everyday version]
+The Poisson assumes that once you know the average, you know exactly how much the
+counts wobble. Real data almost always wobble more, because there is something
+going on that you have not measured.
+\end{plainenglish}
+
+\section{Why it happens}
+
+Five common causes, in rough order of frequency:
+
+\begin{enumerate}
+  \item \textbf{Unobserved heterogeneity.} Individuals differ in ways you did not
+        record. Some people are simply accident-prone. Mixing many different
+        Poisson rates together produces something more variable than any single
+        Poisson.
+  \item \textbf{Clustering / correlation.} Repeated measures on the same subject,
+        pupils in classes, chicks in broods. Non-independence inflates variance.
+  \item \textbf{Contagion.} One event makes another more likely. Infections,
+        traffic jams, cascading equipment failures.
+  \item \textbf{Excess zeros.} A subgroup that structurally cannot have the event
+        at all (Chapter 10).
+  \item \textbf{Model misspecification.} A missing predictor, a missing
+        interaction, or a non-linear effect fitted as linear. This one is worth
+        ruling out \emph{before} you reach for a fancier distribution.
+\end{enumerate}
+
+Here is cause 1, shown directly. Mix Poissons with different rates and watch the
+variance overshoot the mean.
+
+<<why-overdisp, fig.width=9, fig.height=3.8, out.width="\\textwidth", fig.cap="Both panels have the same overall mean. On the left every unit shares one rate, so variance equals mean. On the right the rate varies between units, and the resulting mixture has variance far above its mean.">>=
+set.seed(3)
+N <- 5000
+y_pois <- rpois(N, lambda = 4)                       # everyone identical
+lam    <- rgamma(N, shape = 0.7, rate = 0.7/4)       # rates vary between units
+y_mix  <- rpois(N, lambda = lam)                     # a gamma-Poisson mixture = NB
+
+par(mfrow = c(1, 2)); par_book()
+h1 <- table(factor(y_pois, levels = 0:25))
+barplot(h1 / N, col = adjustcolor(PAL["primary"], 0.75), border = "white",
+        xlab = "count", ylab = "proportion",
+        main = sprintf("One shared rate\nmean %.2f, variance %.2f",
+                       mean(y_pois), var(y_pois)))
+h2 <- table(factor(y_mix, levels = 0:25))
+barplot(h2 / N, col = adjustcolor(PAL["accent"], 0.75), border = "white",
+        xlab = "count", ylab = "proportion",
+        main = sprintf("Rates differ between units\nmean %.2f, variance %.2f",
+                       mean(y_mix), var(y_mix)))
+@
+
+Notice the right-hand panel has more zeros \emph{and} a much longer tail, at the
+same average. That shape --- extra zeros plus a long tail --- is the signature of
+overdispersion.
+
+\begin{keyidea}
+A mixture of Poissons whose rates follow a gamma distribution \emph{is} a negative
+binomial. That is not a coincidence or an analogy; it is the mathematical origin of
+the negative binomial, and the reason it is the natural repair for unobserved
+heterogeneity.
+\end{keyidea}
+
+\section{Why it matters: a simulation}
+
+Overdispersion barely moves the coefficients. It wrecks the standard errors. Here
+is the damage, measured.
+
+<<overdisp-damage, fig.width=9, fig.height=3.8, out.width="\\textwidth", fig.cap="1000 simulated datasets with NO true effect of x. The Poisson model's z-statistics are far too spread out, so it rejects the null far too often. The quasi-Poisson model is calibrated.">>=
+set.seed(99)
+sim_one <- function(n = 120, theta = 1) {
+  x  <- rnorm(n)
+  mu <- exp(1.5 + 0 * x)                       # TRUE effect of x is exactly zero
+  y  <- rnbinom(n, mu = mu, size = theta)      # but the data are overdispersed
+  mp <- glm(y ~ x, family = poisson)
+  mq <- glm(y ~ x, family = quasipoisson)
+  c(pois = coef(summary(mp))["x", "z value"],
+    quasi = coef(summary(mq))["x", "t value"])
+}
+res <- t(replicate(1000, sim_one()))
+
+## How often does each model declare a significant effect that does not exist?
+round(c(poisson_type1_error = mean(abs(res[, "pois"])  > 1.96),
+        quasi_type1_error   = mean(abs(res[, "quasi"]) > 1.96),
+        nominal             = 0.05), 3)
+
+par(mfrow = c(1, 2)); par_book()
+for (j in 1:2) {
+  hist(res[, j], breaks = 40, freq = FALSE, border = "white",
+       col = adjustcolor(c(PAL["red"], PAL["green"])[j], 0.6),
+       xlim = c(-6, 6), ylim = c(0, 0.45), xlab = "test statistic for x",
+       main = c("Poisson: too confident", "Quasi-Poisson: honest")[j])
+  curve(dnorm(x), add = TRUE, lwd = 2.5, col = PAL["primary"])
+  abline(v = c(-1.96, 1.96), lty = 2, col = PAL["grey"])
+}
+@
+
+The Poisson model rejects a true null hypothesis about
+\Sexpr{round(100*mean(abs(res[, "pois"]) > 1.96))}\% of the time instead of 5\%.
+That is not a small distortion. It means roughly
+\Sexpr{round(mean(abs(res[, "pois"]) > 1.96)/0.05, 1)} times as many false
+discoveries as advertised.
+
+\begin{warningbox}
+Overdispersion makes standard errors too small, confidence intervals too narrow,
+and $p$-values too small. It almost never biases the coefficients themselves. So a
+model that looks great --- everything significant! --- is exactly the pattern
+overdispersion produces.
+\end{warningbox}
+
+\section{Detecting it}
+
+\subsection{Method 1: the Pearson dispersion statistic}
+
+The workhorse. Compute
+\[
+\hat\phi = \frac{1}{n-p}\sum_i \frac{(y_i - \hat\mu_i)^2}{\hat\mu_i}
+        = \frac{X^2}{\text{residual df}}.
+\]
+
+<<quine-fit>>=
+data(quine, package = "MASS")
+str(quine)
+m_pois <- glm(Days ~ Eth + Sex + Age + Lrn, family = poisson, data = quine)
+
+dispersion <- function(model) {
+  X2 <- sum(residuals(model, type = "pearson")^2)
+  df <- df.residual(model)
+  c(pearson_X2 = X2, df = df, dispersion = X2 / df,
+    p_value = pchisq(X2, df, lower.tail = FALSE))
+}
+round(dispersion(m_pois), 4)
+@
+
+A dispersion of \Sexpr{round(dispersion(m_pois)["dispersion"], 1)} is severe. The
+counts vary about \Sexpr{round(dispersion(m_pois)["dispersion"], 0)} times more
+than a Poisson permits, so the standard errors printed by \fn{glm} are too small
+by a factor of roughly
+$\sqrt{\Sexpr{round(dispersion(m_pois)["dispersion"], 1)}} \approx
+\Sexpr{round(sqrt(dispersion(m_pois)["dispersion"]), 1)}$.
+
+\subsection{Method 2: residual deviance over degrees of freedom}
+
+You will see this reported constantly, because it is right there in the
+\fn{summary} output.
+
+<<dev-df>>=
+c(residual_deviance = deviance(m_pois), df = df.residual(m_pois),
+  ratio = deviance(m_pois) / df.residual(m_pois))
+@
+
+\begin{warningbox}[Use the Pearson version, not the deviance version]
+The deviance/df ratio is convenient but biased, especially when many fitted means
+are small (under about 5). It can suggest overdispersion when there is none. The
+Pearson statistic is the one with the theory behind it. When they disagree,
+believe Pearson.
+\end{warningbox}
+
+\subsection{Method 3: a formal test}
+
+\fn{AER::dispersiontest} tests $H_0: \Var = \mu$ against
+$\Var = \mu + \alpha\, f(\mu)$.
+
+<<disp-test>>=
+library(AER)
+dispersiontest(m_pois)                     # tests Var = mu + alpha*mu   (NB1-style)
+dispersiontest(m_pois, trafo = 2)          # tests Var = mu + alpha*mu^2 (NB2-style)
+@
+
+Both reject decisively. The \fn{trafo = 2} version is the one that corresponds to
+the negative binomial you get from \fn{glm.nb}.
+
+\subsection{Method 4: look at it}
+
+Numbers are good; pictures are better. Plot squared residuals against fitted
+values, and compare the observed count distribution with what the model expects.
+
+<<overdisp-plots, fig.width=9.4, fig.height=4, out.width="\\textwidth", fig.cap="Left: if the Poisson held, the average squared Pearson residual would sit on the horizontal line at 1. Right: the Poisson model badly under-predicts both the zeros and the long tail.">>=
+par(mfrow = c(1, 2)); par_book()
+pr2 <- residuals(m_pois, type = "pearson")^2
+plot(fitted(m_pois), pr2, pch = 21, bg = adjustcolor(PAL["primary"], 0.35),
+     col = "white", cex = 1.1, log = "y",
+     xlab = "fitted mean", ylab = "squared Pearson residual",
+     main = "Squared Pearson residuals")
+grid_book(); abline(h = 1, lwd = 2.5, col = PAL["green"])
+lines(lowess(fitted(m_pois), pr2), lwd = 2.5, col = PAL["red"])
+legend("topright", bty = "n", cex = 0.75, lwd = 2.5,
+       col = c(PAL["green"], PAL["red"]),
+       legend = c("Poisson expects 1", "actual average"))
+
+## Observed vs expected frequency of each count
+maxk <- 40
+obs  <- table(factor(pmin(quine$Days, maxk), levels = 0:maxk))
+expd <- sapply(0:maxk, function(k) sum(dpois(k, fitted(m_pois))))
+plot(0:maxk, as.numeric(obs), type = "h", lwd = 3, col = PAL["primary"],
+     xlab = "days absent", ylab = "frequency",
+     main = "Observed vs Poisson-expected counts")
+grid_book()
+lines(0:maxk, expd, lwd = 2.5, col = PAL["red"])
+points(0:maxk, expd, pch = 19, cex = 0.5, col = PAL["red"])
+legend("topright", bty = "n", cex = 0.8, lwd = c(3, 2.5),
+       col = c(PAL["primary"], PAL["red"]), legend = c("observed", "Poisson expects"))
+@
+
+\subsection{Method 5: the simplest check of all}
+
+Does the model reproduce the number of zeros, and the size of the biggest values?
+
+<<zero-check>>=
+c(observed_zeros = sum(quine$Days == 0),
+  poisson_expects = round(sum(dpois(0, fitted(m_pois))), 1))
+c(observed_max = max(quine$Days),
+  poisson_99th_percentile = round(max(qpois(0.99, fitted(m_pois)))))
+@
+
+The Poisson expects essentially no zeros and cannot produce values anywhere near
+the observed maximum. That is a comprehensive failure.
+
+\section{Rule out the boring explanation first}
+
+Before concluding ``the distribution is wrong'', check that the \emph{mean model}
+is right. Overdispersion is often just a missing term.
+
+<<misspec-demo>>=
+set.seed(21)
+n <- 300
+x <- runif(n, 0, 3)
+z <- rbinom(n, 1, 0.5)                       # an important variable...
+y <- rpois(n, exp(0.4 + 0.6 * x + 1.4 * z))  # ...that really matters
+
+## Leave z out: the data look overdispersed
+round(dispersion(glm(y ~ x, family = poisson))["dispersion"], 3)
+## Put z in: the "overdispersion" disappears
+round(dispersion(glm(y ~ x + z, family = poisson))["dispersion"], 3)
+@
+
+The data were generated from a perfect Poisson. Omitting a real predictor
+manufactured a dispersion of
+\Sexpr{round(dispersion(glm(y ~ x, family=poisson))["dispersion"], 2)} out of
+nothing.
+
+\begin{rulebox}[Checklist before switching distributions]
+\begin{enumerate}
+  \item Have you included all the predictors you have?
+  \item Should any continuous predictor be curved (a spline, a log, a quadratic)?
+  \item Are there interactions you have ignored?
+  \item Do you need an offset for unequal exposure?
+  \item Are there a handful of extreme outliers driving everything?
+  \item Are the observations clustered?
+\end{enumerate}
+Only after all six should you conclude the distribution itself is wrong.
+\end{rulebox}
+
+\section{Your options once overdispersion is real}
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.24\textwidth}p{0.30\textwidth}p{0.42\textwidth}@{}}
+\toprule
+\textbf{Option} & \textbf{\R} & \textbf{When to use it} \\
+\midrule
+Quasi-Poisson & \fn{family = quasipoisson} & Quick fix; you only want correct SEs.
+  Variance $=\phi\mu$. No AIC, no likelihood. \\
+Robust (sandwich) SEs & \fn{coeftest(m, vcov = sandwich)} & Same idea, keeps the
+  Poisson likelihood. Good with clustering too. \\
+Negative binomial & \fn{MASS::glm.nb} & The standard answer. Variance
+  $=\mu + \mu^2/\theta$. A real likelihood, so AIC and LRTs work. \\
+Observation-level random effect & \fn{glmer(\dots + (1|obs))} & Poisson-lognormal
+  mixture; natural inside a GLMM. \\
+Zero-inflated / hurdle & \fn{zeroinfl}, \fn{hurdle} & Only if the excess is
+  specifically in the zeros. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Underdispersion}
+
+Less common, but it happens: $\hat\phi < 1$, data \emph{less} variable than
+Poisson. Typical causes are a bounded or regulated process (a clinic that always
+books between 8 and 12 patients), or counts that were rounded or capped.
+
+<<underdisp>>=
+set.seed(5)
+y_under <- rbinom(200, size = 12, prob = 0.5)      # mean 6, variance only 3
+mu_ <- glm(y_under ~ 1, family = poisson)
+round(dispersion(mu_)["dispersion"], 3)
+@
+
+Consequences run the other way: standard errors are too \emph{large}, so you lose
+power but stay conservative. Options are quasi-Poisson (which handles $\phi < 1$
+perfectly well), a binomial model if there is a real upper bound, or a
+Conway--Maxwell--Poisson model (Chapter 11).
+
+\begin{keyidea}[The one-line summary of this chapter]
+Fit the Poisson, compute
+\fn{sum(residuals(m, type="pearson")\textasciicircum 2) / df.residual(m)}, and act
+on the answer. Near 1: keep it. Above about 1.2: fix it. Above 2: you must fix it.
+\end{keyidea}

@@ -1,0 +1,245 @@
+\chapter{Negative binomial regression}
+
+\section{Where it comes from}
+
+Chapter 7 showed that mixing Poisson distributions with varying rates produces
+something more variable than a Poisson. Make that precise: let each unit have its
+own rate $\lambda_i$, drawn from a gamma distribution with mean $\mu_i$, and let
+the count be Poisson given that rate:
+\[
+Y_i \mid \lambda_i \sim \text{Poisson}(\lambda_i), \qquad
+\lambda_i \sim \text{Gamma}(\theta,\ \theta/\mu_i).
+\]
+Integrate out $\lambda_i$ and you get exactly the negative binomial:
+\[
+\E(Y_i) = \mu_i, \qquad \Var(Y_i) = \mu_i + \frac{\mu_i^2}{\theta}.
+\]
+
+\begin{plainenglish}[The interpretation of theta]
+$\theta$ measures how much units differ from one another beyond what the
+predictors explain. Large $\theta$ (say above 20) means units are nearly
+interchangeable and the model collapses back to a Poisson. Small $\theta$ (below 1)
+means huge unexplained heterogeneity --- lots of zeros and a very long tail.
+\end{plainenglish}
+
+<<theta-shapes, fig.width=9.4, fig.height=3.4, out.width="\\textwidth", fig.cap="The same mean of 5 under four values of theta. As theta shrinks, zeros pile up and the tail stretches out.">>=
+par(mfrow = c(1, 4)); par_book()
+for (th in c(50, 5, 1, 0.3)) {
+  k <- 0:30
+  barplot(dnbinom(k, mu = 5, size = th), names.arg = k, border = "white",
+          col = adjustcolor(PAL["accent"], 0.75), cex.names = 0.55,
+          ylim = c(0, 0.45), main = bquote(theta == .(th)),
+          xlab = "count", ylab = if (th == 50) "probability" else "")
+}
+@
+
+\begin{warningbox}[Names for the same parameter]
+\R{} calls it \fn{theta} (\pkg{MASS}) or \fn{size} (\fn{rnbinom}, \fn{dnbinom}).
+Stata calls its reciprocal \fn{alpha}, so $\alpha = 1/\theta$. Some textbooks use
+$k$. They all describe the same thing, but \emph{small} $\theta$ means the same as
+\emph{large} $\alpha$. Check which convention a paper is using before comparing
+numbers.
+\end{warningbox}
+
+\section{Fitting it}
+
+<<nb-fit>>=
+library(MASS)
+data(quine)
+m_nb <- glm.nb(Days ~ Eth + Sex + Age + Lrn, data = quine)
+summary(m_nb)
+@
+
+The important extra line is \fn{Theta} at the bottom, with its own standard error.
+
+<<nb-theta>>=
+c(theta = m_nb$theta, se = m_nb$SE.theta, alpha = 1 / m_nb$theta)
+@
+
+With $\hat\theta = \Sexpr{round(m_nb$theta, 3)}$, the variance function is
+$\mu + \mu^2/\Sexpr{round(m_nb$theta, 2)}$. At a fitted mean of 20, that is a
+variance of
+\Sexpr{round(20 + 400/m_nb$theta, 0)} instead of the Poisson's 20 --- roughly
+\Sexpr{round((20 + 400/m_nb$theta)/20, 0)} times as variable.
+
+\section{Poisson versus negative binomial, side by side}
+
+<<nb-vs-pois>>=
+m_pois  <- glm(Days ~ Eth + Sex + Age + Lrn, family = poisson, data = quine)
+m_quasi <- glm(Days ~ Eth + Sex + Age + Lrn, family = quasipoisson, data = quine)
+
+round(cbind(
+  est_poisson = coef(m_pois),
+  est_nb      = coef(m_nb),
+  se_poisson  = coef(summary(m_pois))[, 2],
+  se_quasi    = coef(summary(m_quasi))[, 2],
+  se_nb       = coef(summary(m_nb))[, 2]
+), 4)
+@
+
+Two things to notice. The coefficients move a little (the NB reweights the large
+counts), and the standard errors roughly double or triple.
+
+\subsection{Is the negative binomial actually better? The likelihood-ratio test}
+
+The Poisson is the negative binomial in the limit $\theta \to \infty$, so the two
+are nested and we can test between them:
+
+<<nb-lrt>>=
+LR <- 2 * (as.numeric(logLik(m_nb)) - as.numeric(logLik(m_pois)))
+c(LR_statistic = LR,
+  naive_p = pchisq(LR, df = 1, lower.tail = FALSE),
+  correct_p = 0.5 * pchisq(LR, df = 1, lower.tail = FALSE))
+@
+
+\begin{keyidea}[Why the $p$-value is halved]
+Under $H_0$ the extra parameter sits on the \emph{boundary} of its parameter space
+($1/\theta = 0$ is the edge). The null distribution is then a 50:50 mixture of
+$\chi^2_0$ and $\chi^2_1$, so the correct $p$-value is half the naive one. In
+practice the evidence is usually so overwhelming that it makes no difference --- but
+the halving is the technically right answer and it matters in borderline cases.
+\end{keyidea}
+
+\pkg{pscl} packages this test for you:
+
+<<odtest>>=
+pscl::odTest(m_nb)
+@
+
+\subsection{Compare on AIC too}
+
+<<nb-aic>>=
+round(c(AIC_poisson = AIC(m_pois), AIC_negbin = AIC(m_nb),
+        BIC_poisson = BIC(m_pois), BIC_negbin = BIC(m_nb)), 1)
+@
+
+A drop of \Sexpr{round(AIC(m_pois) - AIC(m_nb))} AIC points is not a close call.
+
+\section{Does it fit? Compare the predicted distributions}
+
+The sharpest check for a count model is whether it can reproduce the shape of the
+data.
+
+<<nb-fitcheck, fig.width=9.4, fig.height=4.2, out.width="\\textwidth", fig.cap="Left: expected frequencies of each count under both models against what was observed. Right: a hanging rootogram -- bars that hang below zero are counts the model under-predicts.">>=
+par(mfrow = c(1, 2)); par_book()
+maxk <- 45
+obs  <- as.numeric(table(factor(pmin(quine$Days, maxk), levels = 0:maxk)))
+e_p  <- sapply(0:maxk, function(k) sum(dpois(k, fitted(m_pois))))
+e_nb <- sapply(0:maxk, function(k) sum(dnbinom(k, mu = fitted(m_nb), size = m_nb$theta)))
+
+plot(0:maxk, obs, type = "h", lwd = 3, col = adjustcolor(PAL["primary"], 0.6),
+     xlab = "days absent", ylab = "frequency", main = "Observed vs expected")
+grid_book()
+lines(0:maxk, e_p,  lwd = 2.5, col = PAL["red"])
+lines(0:maxk, e_nb, lwd = 2.5, col = PAL["green"])
+legend("topright", bty = "n", cex = 0.8, lwd = c(3, 2.5, 2.5),
+       col = c(adjustcolor(PAL["primary"], 0.6), PAL["red"], PAL["green"]),
+       legend = c("observed", "Poisson", "negative binomial"))
+
+## Hanging rootogram: bars hang from the fitted curve on a square-root scale
+rootogram <- function(obs, exp_, main) {
+  plot(range(0:(length(obs)-1)), c(-2.5, max(sqrt(exp_)) * 1.15), type = "n",
+       xlab = "count", ylab = expression(sqrt("frequency")), main = main)
+  grid_book()
+  rect(0:(length(obs)-1) - 0.4, sqrt(exp_) - sqrt(obs),
+       0:(length(obs)-1) + 0.4, sqrt(exp_),
+       col = adjustcolor(PAL["primary"], 0.45), border = "white")
+  abline(h = 0, lwd = 2, col = PAL["grey"])
+  lines(0:(length(obs)-1), sqrt(exp_), lwd = 2.5, col = PAL["red"])
+}
+rootogram(obs, e_nb, "Rootogram: negative binomial")
+@
+
+\begin{plainenglish}[How to read a rootogram]
+The red curve is what the model expects. Each bar hangs down from that curve by the
+observed frequency. If the model is right, every bar just touches the zero line.
+Bars ending \emph{below} zero mean the model under-predicts that count; bars
+floating \emph{above} zero mean it over-predicts. It is the single most informative
+plot for a count model.
+\end{plainenglish}
+
+\section{The two flavours: NB2 and NB1}
+
+What we have fitted is \textbf{NB2}: variance $= \mu + \mu^2/\theta$, quadratic in
+the mean. There is also \textbf{NB1}: variance $= \mu(1 + \alpha)$, linear in the
+mean --- effectively quasi-Poisson but with a genuine likelihood. \pkg{glmmTMB}
+fits both.
+
+<<nb1-nb2>>=
+library(glmmTMB)
+nb2 <- glmmTMB(Days ~ Eth + Sex + Age + Lrn, family = nbinom2, data = quine)
+nb1 <- glmmTMB(Days ~ Eth + Sex + Age + Lrn, family = nbinom1, data = quine)
+round(c(AIC_nb2 = AIC(nb2), AIC_nb1 = AIC(nb1),
+        AIC_glm.nb = AIC(m_nb)), 1)
+@
+
+\fn{glmmTMB} with \fn{nbinom2} reproduces \fn{glm.nb} exactly, as it should. Here
+NB2 fits a little better than NB1, so the variance really does grow faster than
+linearly.
+
+\begin{rulebox}
+Start with NB2 --- it is what everyone means by ``negative binomial'' and it is
+what \fn{glm.nb} gives you. Try NB1 if the rootogram or the residual plots suggest
+NB2 is over-correcting in the tail.
+\end{rulebox}
+
+\section{Reporting a negative binomial model}
+
+<<nb-report>>=
+tab <- cbind(IRR = exp(coef(m_nb)), exp(confint.default(m_nb)),
+             p = coef(summary(m_nb))[, 4])
+round(tab, 4)
+@
+
+\begin{keyidea}[The sentence]
+``Aboriginal children were absent
+\Sexpr{round(1/exp(coef(m_nb))["EthN"], 2)} times as often as non-Aboriginal
+children (IRR \Sexpr{round(exp(coef(m_nb))["EthN"], 2)} for non-Aboriginal vs
+Aboriginal, 95\% CI
+\Sexpr{round(exp(confint.default(m_nb))["EthN", 1], 2)}--\Sexpr{round(exp(confint.default(m_nb))["EthN", 2], 2)}),
+adjusting for sex, age group and learner status. A negative binomial model was used
+because the counts were strongly overdispersed (Pearson dispersion
+\Sexpr{round(sum(residuals(m_pois, type="pearson")^2)/df.residual(m_pois), 1)} under
+a Poisson model); the estimated dispersion parameter was $\hat\theta =
+\Sexpr{round(m_nb$theta, 2)}$.''
+\end{keyidea}
+
+Always state (a) that you checked for overdispersion, (b) what you found, (c) what
+you did about it, and (d) the estimated $\theta$. Those four facts let a reader
+judge your analysis.
+
+\section{Things that go wrong}
+
+\subsection{$\theta$ runs off to infinity}
+
+If the data are not actually overdispersed, \fn{glm.nb} may fail to converge or
+return a huge $\theta$ with a huge standard error. That is the model telling you a
+Poisson would do.
+
+<<theta-large>>=
+set.seed(8)
+d0 <- data.frame(x = rnorm(200)); d0$y <- rpois(200, exp(1 + 0.5 * d0$x))
+suppressWarnings(nb0 <- glm.nb(y ~ x, data = d0))
+c(theta = nb0$theta, se_theta = nb0$SE.theta)
+@
+
+An estimate that large with that much uncertainty means $1/\theta$ is
+indistinguishable from zero. Use the Poisson.
+
+\subsection{The negative binomial does not fix everything}
+
+It handles \emph{extra variability}. It does not automatically handle
+\emph{structural zeros}, and it does not handle clustering. Check the rootogram: if
+only the zero bar is badly off while the rest fits, you need Chapter 10, not a
+different variance function.
+
+<<nb-zeros>>=
+c(observed_zeros  = sum(quine$Days == 0),
+  poisson_expects = round(sum(dpois(0, fitted(m_pois))), 1),
+  negbin_expects  = round(sum(dnbinom(0, mu = fitted(m_nb), size = m_nb$theta)), 1))
+@
+
+Here the negative binomial predicts \Sexpr{round(sum(dnbinom(0, mu=fitted(m_nb),
+size=m_nb$theta)), 1)} zeros against \Sexpr{sum(quine$Days == 0)} observed --- close
+enough that zero-inflation is not needed for these data. The extra variability was
+the whole problem, and the negative binomial has absorbed it.

@@ -1,0 +1,216 @@
+\chapter{Poisson regression I: modelling counts}
+
+\section{Where the Poisson comes from}
+
+Imagine events happening independently at a constant average rate: phone calls
+arriving at a switchboard, mutations along a strand of DNA, potholes per kilometre
+of road. Count how many occur in a fixed window and you get a Poisson variable:
+\[
+\Pr(Y = k) = \frac{e^{-\mu}\mu^{k}}{k!}, \qquad k = 0, 1, 2, \dots
+\]
+
+with the striking property
+\[
+\E(Y) = \Var(Y) = \mu.
+\]
+
+\begin{plainenglish}[The Poisson assumption, in words]
+Events happen one at a time, independently of each other, at a rate that does not
+change within the observation window. Nothing you have already seen makes the next
+event more or less likely.
+\end{plainenglish}
+
+That last sentence is exactly what fails in most real data --- one accident causes
+a traffic jam that causes another; one sick child infects the others in the class.
+When it fails you get overdispersion, which is Chapter 7. First, the model itself.
+
+\section{The model}
+
+\[
+y_i \sim \text{Poisson}(\mu_i), \qquad \log(\mu_i) = \beta_0 + \beta_1 x_{1i} + \dots
+\]
+
+Why the log link? Three reasons, all good:
+
+\begin{enumerate}
+  \item It guarantees $\mu_i = e^{\eta_i} > 0$. Counts cannot have a negative mean.
+  \item It makes effects multiplicative, which is how count processes usually
+        behave --- ``40\% more accidents'', not ``3.2 more accidents''.
+  \item It is the canonical link for the Poisson, which makes the fitting
+        algorithm well behaved.
+\end{enumerate}
+
+\section{A first fit}
+
+The \fn{warpbreaks} data counts breaks in yarn during weaving, for two wool types
+under three levels of tension.
+
+<<wb-explore, fig.width=9, fig.height=3.6, out.width="\\textwidth", fig.cap="Left: the distribution of the counts. Right: group means against group variances. If the Poisson is right, the points should sit near the diagonal.">>=
+data(warpbreaks)
+par(mfrow = c(1, 2)); par_book()
+hist(warpbreaks$breaks, breaks = 12, col = adjustcolor(PAL["primary"], 0.6),
+     border = "white", xlab = "breaks", main = "Counts of yarn breaks")
+
+mv <- aggregate(breaks ~ wool + tension, data = warpbreaks,
+                FUN = function(z) c(m = mean(z), v = var(z)))
+mv <- data.frame(wool = mv$wool, tension = mv$tension,
+                 m = mv$breaks[, "m"], v = mv$breaks[, "v"])
+plot(mv$m, mv$v, pch = 19, cex = 1.5, col = PAL["accent"],
+     xlim = c(0, 45), ylim = c(0, 250),
+     xlab = "group mean", ylab = "group variance",
+     main = "Is variance = mean?")
+grid_book(); abline(0, 1, lwd = 2.5, col = PAL["primary"])
+text(mv$m, mv$v, paste0(mv$wool, mv$tension), pos = 4, cex = 0.7, col = PAL["grey"])
+legend("topleft", bty = "n", cex = 0.8, lwd = 2.5, col = PAL["primary"],
+       legend = "variance = mean (Poisson)")
+@
+
+The variances sit well above the line --- a first hint of overdispersion that we
+will deal with properly in Chapter 7. Fit the Poisson model anyway, so we have
+something to compare against.
+
+<<wb-fit>>=
+pm <- glm(breaks ~ wool + tension, family = poisson, data = warpbreaks)
+summary(pm)
+@
+
+\section{Interpreting a log-link coefficient}
+
+<<wb-irr>>=
+round(exp(cbind(IRR = coef(pm), confint(pm))), 3)
+@
+
+\begin{keyidea}[The sentence to write]
+``Wool type B is associated with an expected number of breaks
+\Sexpr{round(exp(coef(pm))["woolB"], 2)} times that of wool type A (a
+\Sexpr{abs(round((exp(coef(pm))["woolB"] - 1) * 100))}\% reduction), holding
+tension constant.''
+\end{keyidea}
+
+$e^{\beta}$ from a log-link model has several names, all the same number:
+\textbf{rate ratio}, \textbf{incidence rate ratio (IRR)}, \textbf{risk ratio} when
+the counts are events per person, or just \textbf{multiplicative effect}.
+
+A useful trick for small coefficients: for $|\beta| < 0.2$, $e^{\beta} - 1 \approx
+\beta$, so a coefficient of $0.08$ is roughly an 8\% increase. Beyond that the
+approximation drifts:
+
+<<approx>>=
+b <- c(0.02, 0.05, 0.1, 0.2, 0.5, 1)
+data.frame(beta = b, exact_pct = round((exp(b) - 1) * 100, 1),
+           approx_pct = b * 100)
+@
+
+\subsection{Absolute versus relative effects}
+
+A rate ratio hides the baseline. Doubling a rate of 0.001 and doubling a rate of 40
+are the same ratio and wildly different in practice. Always show predicted counts
+too:
+
+<<wb-pred>>=
+nd <- expand.grid(wool = c("A", "B"), tension = c("L", "M", "H"))
+nd$fit <- predict(pm, newdata = nd, type = "response")
+nd
+@
+
+<<wb-effect-plot, fig.width=7.5, fig.height=4, out.width="0.82\\textwidth", fig.cap="Observed counts (points) and Poisson model predictions (bars) for each wool-by-tension combination.">>=
+par_book()
+bp <- barplot(matrix(nd$fit, nrow = 2), beside = TRUE,
+              names.arg = c("Low", "Medium", "High"),
+              col = c(adjustcolor(PAL["primary"], 0.75), adjustcolor(PAL["accent"], 0.75)),
+              border = "white", ylim = c(0, 55),
+              xlab = "tension", ylab = "expected breaks",
+              main = "Model predictions with the raw data overlaid")
+legend("topright", bty = "n", fill = c(adjustcolor(PAL["primary"], 0.75),
+       adjustcolor(PAL["accent"], 0.75)), border = "white",
+       legend = c("wool A", "wool B"), cex = 0.85)
+grp <- interaction(warpbreaks$wool, warpbreaks$tension)
+xs  <- as.vector(bp)[as.integer(factor(grp, levels = c("A.L","B.L","A.M","B.M","A.H","B.H")))]
+points(jitter(xs, amount = 0.15), warpbreaks$breaks, pch = 21,
+       bg = adjustcolor("white", 0.9), col = PAL["grey"], cex = 0.9)
+@
+
+\section{Why not just log-transform and use \fn{lm}?}
+
+It is tempting to fit \fn{lm(log(y + 1) \textasciitilde{} x)}. Three reasons not to:
+
+\begin{enumerate}
+  \item \textbf{Zeros.} $\log(0)$ is undefined, so you have to add a fudge constant.
+        The results depend on which constant you pick, which is not a comfortable
+        position to defend.
+  \item \textbf{You change the question.} $\E[\log Y] \neq \log \E[Y]$. The linear
+        model estimates the geometric mean, the Poisson model the arithmetic mean.
+        Those differ, and the arithmetic mean is nearly always what you want.
+  \item \textbf{The variance is still wrong.} Logging helps but rarely produces
+        constant variance for counts, especially with many small values.
+\end{enumerate}
+
+<<log-lm-compare>>=
+lm_log <- lm(log(breaks + 1) ~ wool + tension, data = warpbreaks)
+round(rbind(
+  poisson_IRR = exp(coef(pm)),
+  lm_log_ratio = exp(coef(lm_log))
+), 3)
+## What each model says the average count is for wool A, low tension:
+c(poisson = predict(pm, data.frame(wool = "A", tension = "L"), type = "response"),
+  lm_log  = exp(predict(lm_log, data.frame(wool = "A", tension = "L"))) - 1,
+  observed_mean = mean(warpbreaks$breaks[warpbreaks$wool == "A" &
+                                         warpbreaks$tension == "L"]))
+@
+
+The Poisson model reproduces the observed group mean exactly; the log-linear model
+does not, because it is estimating a different quantity.
+
+\begin{rulebox}
+Use a Poisson-family GLM for counts. Reserve \fn{log()} transformations for
+continuous positive outcomes such as concentrations, incomes or durations, where
+the multiplicative structure is real and there are no zeros.
+\end{rulebox}
+
+\section{Counts with a fixed upper limit}
+
+If a count has a natural ceiling --- 7 correct answers out of 10, 3 seizures out of
+a maximum of 3 --- it is not Poisson. It is binomial. The Poisson is for counts
+with no upper bound (or a bound so far away it never matters).
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.44\textwidth}p{0.20\textwidth}p{0.30\textwidth}@{}}
+\toprule
+\textbf{Situation} & \textbf{Distribution} & \textbf{\R} \\
+\midrule
+Number of accidents on a road this year & Poisson & \fn{family = poisson} \\
+Number of students passing out of 30    & Binomial & \fn{cbind(pass, 30-pass)} \\
+Number of ticks on a chick (no ceiling) & Poisson / NB & \fn{poisson}, \fn{glm.nb} \\
+Number of days absent out of 365        & Binomial (or Poisson if the count is small relative to 365) & either \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Checking a Poisson fit quickly}
+
+Three checks take ten seconds and catch most problems.
+
+<<pois-quickcheck>>=
+## 1. Dispersion: should be near 1
+sum(residuals(pm, type = "pearson")^2) / df.residual(pm)
+
+## 2. Does the model reproduce the number of zeros in the data?
+c(observed_zeros = sum(warpbreaks$breaks == 0),
+  expected_zeros = sum(dpois(0, fitted(pm))))
+
+## 3. Do fitted and observed agree on average within groups?
+round(tapply(warpbreaks$breaks, warpbreaks$tension, mean), 2)
+round(tapply(fitted(pm),        warpbreaks$tension, mean), 2)
+@
+
+Check 1 already tells us the model is in trouble here: a dispersion of
+\Sexpr{round(sum(residuals(pm, type="pearson")^2)/df.residual(pm), 2)} is well
+above 1. Chapters 7--9 are entirely about what to do next.
+
+\begin{keyidea}[The workflow from here]
+Fit the Poisson. Measure the dispersion. If it is close to 1, you are done. If it
+is well above 1, move to quasi-Poisson or negative binomial. If it is above 1
+\emph{and} there are far more zeros than the model predicts, consider
+zero-inflation or a hurdle model.
+\end{keyidea}

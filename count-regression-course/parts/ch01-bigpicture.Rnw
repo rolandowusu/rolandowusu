@@ -1,0 +1,219 @@
+\chapter{The big picture: choosing a model}
+
+\section{Why ordinary regression is not enough}
+
+Ordinary linear regression says:
+\[
+y_i = \beta_0 + \beta_1 x_i + \varepsilon_i, \qquad
+\varepsilon_i \sim \mathcal{N}(0, \sigma^2).
+\]
+
+Read that carefully and you will spot three promises hidden in it:
+
+\begin{enumerate}
+  \item \textbf{The outcome can be any number.} Positive, negative, fractional.
+  \item \textbf{The spread is constant.} The same $\sigma^2$ at every value of $x$.
+  \item \textbf{The average is a straight line in $x$}, with no ceiling and no floor.
+\end{enumerate}
+
+Now think about a yes/no outcome, coded 0 and 1. Promise 1 is already broken: the
+outcome can only be 0 or 1, but a straight line will happily predict $1.4$ or
+$-0.2$. Promise 2 is broken too: for a 0/1 outcome the variance is $p(1-p)$, which
+is largest at $p=0.5$ and shrinks to zero at the edges --- so the spread
+\emph{must} change with the mean.
+
+Think about a count: number of hospital visits, number of insect bites, number of
+accidents. Counts cannot be negative and cannot be fractional. And counts behave
+in a very particular way: rare events are tightly bunched near zero, common events
+spread out widely. The variance grows with the mean. Promise 2 breaks again.
+
+Let us see all of this rather than argue about it.
+
+<<why-lm-fails, fig.width=9, fig.height=3.6, out.width="\\textwidth", fig.cap="Left: a straight line fitted to a 0/1 outcome predicts impossible probabilities (shaded regions). Right: for count data the spread of the residuals fans out as the fitted value grows, so a single constant variance cannot describe it.">>=
+set.seed(11)
+n  <- 200
+x  <- runif(n, -3, 3)
+p  <- 1 / (1 + exp(-(0.2 + 1.6 * x)))          # true probability curve
+y  <- rbinom(n, 1, p)                          # the 0/1 outcome we observe
+cnt <- rpois(n, lambda = exp(1.1 + 0.55 * x))  # a count outcome
+
+par(mfrow = c(1, 2)); par_book()
+
+## ---- Panel 1: linear model on a 0/1 outcome -------------------------------
+plot(x, y, pch = 21, bg = adjustcolor(PAL["primary"], 0.35), col = "white",
+     cex = 1.1, ylim = c(-0.35, 1.35), xlab = "x", ylab = "y (0 or 1)",
+     main = "A straight line on a yes/no outcome")
+grid_book()
+rect(-4, 1, 4, 1.5, col = adjustcolor(PAL["red"], 0.10), border = NA)
+rect(-4, -0.5, 4, 0, col = adjustcolor(PAL["red"], 0.10), border = NA)
+abline(h = c(0, 1), col = PAL["red"], lty = 3)
+abline(lm(y ~ x), col = PAL["red"], lwd = 2.4)
+curve(1/(1 + exp(-(0.2 + 1.6*x))), add = TRUE, col = PAL["green"], lwd = 2.4)
+legend("topleft", bty = "n", cex = 0.75, lwd = 2.4,
+       col = c(PAL["red"], PAL["green"]),
+       legend = c("lm(): leaves [0,1]", "logistic: stays inside"))
+
+## ---- Panel 2: constant variance fails for counts ---------------------------
+m_lm <- lm(cnt ~ x)
+plot(fitted(m_lm), resid(m_lm), pch = 21, bg = adjustcolor(PAL["accent"], 0.45),
+     col = "white", cex = 1.1, xlab = "fitted value", ylab = "residual",
+     main = "Residuals from lm() on counts")
+grid_book(); abline(h = 0, col = PAL["grey"], lwd = 1.5)
+lines(lowess(fitted(m_lm), abs(resid(m_lm)))$x,
+      lowess(fitted(m_lm), abs(resid(m_lm)))$y, col = PAL["red"], lwd = 2.2)
+lines(lowess(fitted(m_lm), -abs(resid(m_lm)))$x,
+      lowess(fitted(m_lm), -abs(resid(m_lm)))$y, col = PAL["red"], lwd = 2.2)
+legend("topleft", bty = "n", cex = 0.75,
+       legend = "spread widens with the mean", text.col = PAL["red"])
+@
+
+\begin{keyidea}
+The problem is never that the relationship is ``non-linear''. The problem is
+that the outcome lives on a restricted scale and its variability is tied to its
+mean. Generalised linear models fix both at once.
+\end{keyidea}
+
+\section{The decision tree}
+
+Here is the map for the whole book. Start at the top with the question
+\emph{what kind of thing is my outcome?}
+
+\begin{center}
+\begin{tikzpicture}[
+  font=\sffamily\footnotesize,
+  node distance=6mm and 5mm,
+  box/.style={rectangle, rounded corners=2pt, draw=rule1, fill=white,
+              align=center, inner sep=4pt, minimum height=7mm, text width=30mm},
+  q/.style={box, fill=primarylt, draw=primary, text width=34mm},
+  m/.style={box, fill=greenlt, draw=greenbox, text width=32mm},
+  lbl/.style={font=\sffamily\scriptsize\itshape, text=accent, inner sep=1.5pt},
+  ar/.style={-{Stealth[length=4pt]}, draw=rule1, thick}
+]
+\node[q] (start) {What is the outcome?};
+
+\node[q, below left=10mm and 22mm of start] (bin) {Yes / no\\(or $k$ out of $n$)};
+\node[q, below right=10mm and 22mm of start] (cnt) {A count\\$0,1,2,3,\dots$};
+
+\node[m, below=8mm of bin] (logit) {\textbf{Logistic regression}\\\fn{glm(family=binomial)}\\Ch.\ 3--4};
+\node[q, below=8mm of logit] (binod) {Grouped data, and\\more spread than\\binomial allows?};
+\node[m, below=7mm of binod] (qbin) {\textbf{Quasi-binomial} or\\\textbf{beta-binomial}\\Ch.\ 4, 8};
+
+\node[m, below=8mm of cnt] (pois) {\textbf{Poisson regression}\\\fn{glm(family=poisson)}\\Ch.\ 5--6};
+\node[q, below=8mm of pois] (od) {Is $\Var(y) > \E(y)$?\\(overdispersion)\\Ch.\ 7};
+\node[m, below=7mm of od] (nb) {\textbf{Quasi-Poisson},\\\textbf{negative binomial}\\Ch.\ 8--9};
+\node[q, below=7mm of nb] (zero) {Far more zeros\\than the model\\can produce?};
+\node[m, below=7mm of zero] (zi) {\textbf{Zero-inflated} or\\\textbf{hurdle} model\\Ch.\ 10};
+
+\node[q, text width=64mm] (clust) at ($(start |- zi.south) + (0,-1.5cm)$)
+  {\textbf{Are the observations grouped?} Repeated measures on the same subject,
+   pupils inside schools, animals inside herds, plots inside farms\dots};
+\node[m, below=7mm of clust, text width=64mm, fill=amberlt, draw=amber] (glmm)
+  {\textbf{Add random effects: a GLMM.}\ \fn{glmer()}, \fn{glmmTMB()} --- or use
+   \textbf{GEE} if you want population-average effects. Ch.\ 14--16};
+
+\draw[ar] (start) -| (bin);
+\draw[ar] (start) -| (cnt);
+\draw[ar] (bin) -- (logit);
+\draw[ar] (logit) -- (binod);
+\draw[ar] (binod) -- node[lbl,right] {yes} (qbin);
+\draw[ar] (cnt) -- (pois);
+\draw[ar] (pois) -- (od);
+\draw[ar] (od) -- node[lbl,right] {yes} (nb);
+\draw[ar] (nb) -- (zero);
+\draw[ar] (zero) -- node[lbl,right] {yes} (zi);
+\draw[ar] (qbin) |- (clust.west);
+\draw[ar] (zi) |- (clust.east);
+\draw[ar] (clust) -- node[lbl,right] {yes} (glmm);
+\end{tikzpicture}
+\end{center}
+
+\section{The same table, in words}
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.24\textwidth}p{0.30\textwidth}p{0.40\textwidth}@{}}
+\toprule
+\textbf{Your outcome} & \textbf{Model} & \textbf{\R{} call} \\
+\midrule
+Continuous, symmetric & Linear regression & \fn{lm(y \textasciitilde{} x)} \\
+Yes / no & Logistic regression & \fn{glm(y \textasciitilde{} x, family=binomial)} \\
+$k$ successes out of $n$ & Binomial regression & \fn{glm(cbind(k, n-k) \textasciitilde{} x, family=binomial)} \\
+Proportion, overdispersed & Quasi-binomial & \fn{glm(\dots, family=quasibinomial)} \\
+Count, variance $\approx$ mean & Poisson & \fn{glm(y \textasciitilde{} x, family=poisson)} \\
+Count per unit time/space & Poisson with offset & \fn{glm(y \textasciitilde{} x + offset(log(t)), family=poisson)} \\
+Count, variance $>$ mean & Quasi-Poisson & \fn{glm(\dots, family=quasipoisson)} \\
+Count, variance $>$ mean & Negative binomial & \fn{MASS::glm.nb(y \textasciitilde{} x)} \\
+Count with excess zeros & Zero-inflated & \fn{pscl::zeroinfl(y \textasciitilde{} x | z)} \\
+Count, zeros are a separate process & Hurdle & \fn{pscl::hurdle(y \textasciitilde{} x | z)} \\
+Any of the above, grouped data & GLMM & \fn{lme4::glmer(y \textasciitilde{} x + (1|group), \dots)} \\
+Any of the above, want marginal effects & GEE & \fn{geepack::geeglm(\dots)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{What the distributions actually look like}
+
+Before fitting anything, it helps to know the shapes you are choosing between.
+
+<<dist-shapes, fig.width=9.4, fig.height=5.6, out.width="\\textwidth", fig.cap="The four distributions this book uses. Notice that the Poisson is fully determined by its mean, while the negative binomial has a second knob that lets it be much more spread out at the same mean.">>=
+par(mfrow = c(2, 3)); par_book()
+bar <- function(k, prob, main, col) {
+  barplot(prob, names.arg = k, col = adjustcolor(col, 0.75), border = "white",
+          main = main, xlab = "y", ylab = "probability", cex.names = 0.75)
+}
+k <- 0:14
+bar(k, dpois(k, 1),  "Poisson, mean = 1",  PAL["primary"])
+bar(k, dpois(k, 4),  "Poisson, mean = 4",  PAL["primary"])
+bar(k, dpois(k, 9),  "Poisson, mean = 9",  PAL["primary"])
+bar(k, dbinom(k, 14, 0.3), "Binomial, n = 14, p = 0.3", PAL["green"])
+bar(k, dnbinom(k, mu = 4, size = 10),  "Neg. binomial, mean = 4, theta = 10", PAL["accent"])
+bar(k, dnbinom(k, mu = 4, size = 0.5), "Neg. binomial, mean = 4, theta = 0.5", PAL["accent"])
+@
+
+Three things to take away from that figure:
+
+\begin{itemize}
+  \item A Poisson with a small mean is squashed against zero and skewed right.
+        With a large mean it becomes almost symmetric --- which is why for large
+        counts, ordinary regression sometimes works ``well enough''.
+  \item The Poisson has \emph{one} parameter. Once you say the mean is 4, the
+        variance is also 4. You have no freedom left.
+  \item The negative binomial has a second parameter, usually called $\theta$
+        (\fn{theta}) or \fn{size}. Large $\theta$ makes it look like a Poisson.
+        Small $\theta$ makes it long-tailed and full of zeros \emph{at the same
+        mean}. That extra knob is the whole reason it exists.
+\end{itemize}
+
+\begin{plainenglish}[Mean and variance, side by side]
+Normal: mean and variance are unrelated --- you can have mean 5 with variance 0.01
+or 900. \\
+Poisson: variance $=$ mean, no choice. \\
+Negative binomial: variance $=$ mean $+$ mean$^2/\theta$, always bigger than the
+mean. \\
+Binomial: variance $= np(1-p)$, biggest at $p = 0.5$.
+\end{plainenglish}
+
+\section{Three questions to ask of any dataset}
+
+Before you write a single \fn{glm} call, ask:
+
+\begin{enumerate}
+  \item \textbf{What can this outcome physically be?} Bounded 0/1? Non-negative
+        integers? Non-negative integers with an upper limit? The answer picks your
+        family.
+  \item \textbf{Was every observation given the same opportunity?} If some people
+        were followed for two years and some for two months, you need an offset
+        (Chapter 6). Forgetting this is the most common serious error in count
+        regression.
+  \item \textbf{Are any two rows more alike than two random rows?} Two visits by
+        the same patient, two pupils in the same class, two chicks in the same
+        brood. If yes, you need random effects (Chapters 14--15) or robust
+        standard errors, or your $p$-values will be far too small.
+\end{enumerate}
+
+\begin{warningbox}[The most expensive mistake in this whole book]
+Ignoring clustering does not usually change your estimates very much. It changes
+your \emph{standard errors} --- often by a factor of two or three. That turns
+$p = 0.20$ into $p = 0.02$ and produces a confident published conclusion that is
+simply not supported by the data.
+\end{warningbox}

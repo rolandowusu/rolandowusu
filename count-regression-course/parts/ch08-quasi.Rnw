@@ -1,0 +1,236 @@
+\chapter{Quasi-Poisson and robust standard errors}
+
+Two repairs that keep your Poisson coefficients and only fix the uncertainty
+around them. Both are quick; neither requires you to believe a new distribution.
+
+<<ch8-setup, echo=FALSE>>=
+data(quine, package = "MASS")
+m_pois <- glm(Days ~ Eth + Sex + Age + Lrn, family = poisson, data = quine)
+dispersion <- function(model) {
+  X2 <- sum(residuals(model, type = "pearson")^2); df <- df.residual(model)
+  c(pearson_X2 = X2, df = df, dispersion = X2 / df,
+    p_value = pchisq(X2, df, lower.tail = FALSE))
+}
+@
+
+\section{Quasi-Poisson}
+
+The quasi-Poisson does not assume a distribution at all. It assumes only two
+things:
+\[
+\E(Y_i) = \mu_i = e^{\eta_i}, \qquad \Var(Y_i) = \phi\,\mu_i.
+\]
+That is called a \emph{quasi-likelihood}: enough structure to estimate
+coefficients and standard errors, not enough to be a probability model.
+
+$\phi$ is estimated from the Pearson statistic, and every standard error is
+multiplied by $\sqrt{\hat\phi}$.
+
+<<quasi-fit>>=
+m_quasi <- glm(Days ~ Eth + Sex + Age + Lrn, family = quasipoisson, data = quine)
+summary(m_quasi)
+@
+
+Compare the two fits side by side:
+
+<<quasi-compare>>=
+cmp <- cbind(
+  estimate      = coef(m_pois),
+  se_poisson    = coef(summary(m_pois))[, "Std. Error"],
+  se_quasi      = coef(summary(m_quasi))[, "Std. Error"],
+  p_poisson     = coef(summary(m_pois))[, 4],
+  p_quasi       = coef(summary(m_quasi))[, 4]
+)
+round(cmp, 4)
+## The ratio of the standard errors is exactly sqrt(phi)
+round(c(se_ratio = mean(cmp[, "se_quasi"] / cmp[, "se_poisson"]),
+        sqrt_phi = sqrt(summary(m_quasi)$dispersion)), 4)
+@
+
+\begin{keyidea}
+Quasi-Poisson changes \textbf{nothing} about the estimates and multiplies
+\textbf{every} standard error by the same constant $\sqrt{\hat\phi}$. Here that
+constant is \Sexpr{round(sqrt(summary(m_quasi)$dispersion), 2)}, which is why
+several predictors that looked significant no longer are.
+\end{keyidea}
+
+<<quasi-plot, fig.width=7.5, fig.height=4, out.width="0.82\\textwidth", fig.cap="The same coefficients with Poisson and quasi-Poisson confidence intervals. The estimates do not move; the intervals widen by a factor of sqrt(phi).">>=
+par_book()
+k   <- 2:nrow(cmp)
+est <- cmp[k, "estimate"]
+ylim <- range(c(est - 2*cmp[k, "se_quasi"], est + 2*cmp[k, "se_quasi"]))
+plot(seq_along(k) - 0.1, est, pch = 19, col = PAL["primary"], cex = 1.2,
+     xlim = c(0.5, length(k) + 0.5), ylim = ylim, xaxt = "n",
+     xlab = "", ylab = "coefficient (log scale)",
+     main = "Poisson vs quasi-Poisson intervals")
+grid_book(); abline(h = 0, lty = 2, col = PAL["grey"], lwd = 1.5)
+arrows(seq_along(k) - 0.1, est - 1.96*cmp[k, "se_poisson"],
+       seq_along(k) - 0.1, est + 1.96*cmp[k, "se_poisson"],
+       code = 3, angle = 90, length = 0.04, col = PAL["primary"], lwd = 2)
+points(seq_along(k) + 0.1, est, pch = 19, col = PAL["accent"], cex = 1.2)
+arrows(seq_along(k) + 0.1, est - 1.96*cmp[k, "se_quasi"],
+       seq_along(k) + 0.1, est + 1.96*cmp[k, "se_quasi"],
+       code = 3, angle = 90, length = 0.04, col = PAL["accent"], lwd = 2)
+axis(1, at = seq_along(k), labels = rownames(cmp)[k], cex.axis = 0.75)
+legend("topright", bty = "n", pch = 19, cex = 0.8,
+       col = c(PAL["primary"], PAL["accent"]),
+       legend = c("Poisson", "quasi-Poisson"))
+@
+
+\subsection{What you give up}
+
+<<quasi-nolik, error=TRUE>>=
+AIC(m_quasi)
+logLik(m_quasi)
+@
+
+There is no likelihood, so there is no AIC, no BIC, and no likelihood-ratio test.
+This is the real cost of quasi-likelihood, and it is why model selection with
+quasi-Poisson is awkward.
+
+The substitute is an $F$-test, which \fn{anova} will do if you ask:
+
+<<quasi-anova>>=
+anova(m_quasi, test = "F")
+@
+
+There is also a quasi-AIC (QAIC), which divides the Poisson log-likelihood by
+$\hat\phi$ and adds one for the estimated dispersion:
+
+<<qaic>>=
+QAIC <- function(mod_pois, phi, k_extra = 1) {
+  k <- length(coef(mod_pois)) + k_extra
+  -2 * as.numeric(logLik(mod_pois)) / phi + 2 * k
+}
+phi <- summary(m_quasi)$dispersion
+c(QAIC_full = QAIC(m_pois, phi),
+  QAIC_reduced = QAIC(update(m_pois, . ~ . - Sex), phi))
+@
+
+\begin{warningbox}[QAIC needs a fixed phi]
+When comparing several models with QAIC, estimate $\hat\phi$ \emph{once} from the
+largest sensible model and use that same value for all of them. Re-estimating
+$\phi$ in every model makes the numbers incomparable.
+\end{warningbox}
+
+\section{Robust (sandwich) standard errors}
+
+A different route to the same destination. Keep the Poisson model, but compute the
+standard errors in a way that does not trust the variance assumption at all.
+
+The name comes from the shape of the formula:
+\[
+\underbrace{V = \underbrace{A^{-1}}_{\text{bread}}\;
+\underbrace{B}_{\text{meat}}\; \underbrace{A^{-1}}_{\text{bread}}}_{\text{sandwich}}
+\]
+where $A$ is what the model \emph{claims} the information is and $B$ is what the
+residuals \emph{actually} show.
+
+<<robust-se>>=
+library(sandwich); library(lmtest)
+coeftest(m_pois, vcov. = sandwich)
+@
+
+<<robust-compare>>=
+round(cbind(
+  naive_poisson = coef(summary(m_pois))[, "Std. Error"],
+  quasi_poisson = coef(summary(m_quasi))[, "Std. Error"],
+  robust_HC0    = sqrt(diag(sandwich(m_pois)))
+), 4)
+@
+
+Notice that quasi-Poisson scales all standard errors by the same factor, whereas
+the sandwich adjusts each one differently, according to where in the data the
+extra variability actually lives.
+
+\begin{plainenglish}[Which of the two should I use?]
+Quasi-Poisson when the extra variability is roughly proportional to the mean
+everywhere. Sandwich when it is not, or when you have no idea. The sandwich is
+more general and assumes less; the price is that it needs a decent sample size
+(say 50+ observations, more with many predictors) to be reliable.
+\end{plainenglish}
+
+\subsection{Clustered robust standard errors}
+
+The sandwich has a superpower: it can also absorb clustering. If observations come
+in groups, use a cluster-robust variance.
+
+<<cluster-robust>>=
+data(epil, package = "MASS")
+epil$lbase <- log(epil$base / 4)
+me <- glm(y ~ lbase + trt, family = poisson, data = epil)
+round(cbind(
+  naive     = sqrt(diag(vcov(me))),
+  robust    = sqrt(diag(sandwich(me))),
+  clustered = sqrt(diag(vcovCL(me, cluster = epil$subject)))
+), 4)
+@
+
+The clustered standard errors are several times larger --- because the 236 rows
+are really only \Sexpr{length(unique(epil$subject))} independent patients measured
+repeatedly.
+
+\begin{rulebox}[When cluster-robust SEs are enough]
+They work well when you have many clusters (roughly 40+) and you only care about
+population-average effects. With few clusters they are unreliable, and if you want
+to \emph{describe} the between-cluster variation rather than just adjust for it,
+you need a mixed model (Chapters 14--15).
+\end{rulebox}
+
+\section{Quasi-Poisson versus negative binomial}
+
+Both fix overdispersion; they make different assumptions about \emph{how} the
+variance grows.
+
+\[
+\text{Quasi-Poisson:}\ \Var = \phi\mu \quad\text{(linear in }\mu\text{)}
+\qquad
+\text{Negative binomial:}\ \Var = \mu + \frac{\mu^2}{\theta}\quad\text{(quadratic)}
+\]
+
+<<var-functions, fig.width=7, fig.height=4, out.width="0.8\\textwidth", fig.cap="How the two repairs assume the variance grows with the mean. They agree in the middle of the data and disagree in the tails, which is where they weight observations differently.">>=
+par_book()
+mu <- seq(0.5, 40, length.out = 300)
+plot(mu, mu, type = "l", lwd = 2.5, col = PAL["grey"], log = "y",
+     ylim = c(0.5, 3000), xlab = expression(mu ~ "(mean)"),
+     ylab = "variance (log scale)", main = "Variance functions compared")
+grid_book()
+lines(mu, 4 * mu,           lwd = 3, col = PAL["primary"])
+lines(mu, mu + mu^2 / 2,    lwd = 3, col = PAL["accent"])
+lines(mu, mu + mu^2 / 0.5,  lwd = 3, lty = 2, col = PAL["red"])
+legend("topleft", bty = "n", cex = 0.8, lwd = c(2.5, 3, 3, 3), lty = c(1,1,1,2),
+       col = c(PAL["grey"], PAL["primary"], PAL["accent"], PAL["red"]),
+       legend = c("Poisson: mu", "quasi-Poisson: 4mu",
+                  "NB, theta = 2", "NB, theta = 0.5"))
+@
+
+The practical difference is in \textbf{weighting}. Quasi-Poisson gives large counts
+relatively more weight; the negative binomial, whose variance grows faster,
+downweights them. When your data contain a few very large counts, the two models
+can give noticeably different coefficients.
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.30\textwidth}p{0.33\textwidth}p{0.33\textwidth}@{}}
+\toprule
+ & \textbf{Quasi-Poisson} & \textbf{Negative binomial} \\
+\midrule
+Variance             & $\phi\mu$                    & $\mu + \mu^2/\theta$ \\
+Full probability model & no                         & yes \\
+AIC / BIC available  & no                           & yes \\
+Likelihood-ratio tests & no (use $F$)               & yes \\
+Predicts a distribution & no                        & yes \\
+Handles underdispersion & yes ($\phi<1$)            & no \\
+Weighting of large counts & relatively more         & relatively less \\
+Extends to mixed models & awkward                   & easily (\fn{glmmTMB}) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{rulebox}
+Default to the negative binomial. Choose quasi-Poisson if you have
+underdispersion, if you want the estimates to stay exactly at the Poisson values,
+or if you specifically believe variance is linear in the mean. If they disagree
+substantially, plot the squared residuals against the fitted values and see which
+variance function matches the data.
+\end{rulebox}

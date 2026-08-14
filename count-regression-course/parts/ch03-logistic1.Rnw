@@ -1,0 +1,298 @@
+\chapter{Logistic regression I: the basics}
+
+\section{Probability, odds, and log-odds}
+
+Logistic regression is built on a chain of three ways to express the same thing.
+Get comfortable with the chain and the rest is easy.
+
+\[
+\underbrace{p}_{\text{probability}} \;\longrightarrow\;
+\underbrace{\frac{p}{1-p}}_{\text{odds}} \;\longrightarrow\;
+\underbrace{\log\!\left(\frac{p}{1-p}\right)}_{\text{log-odds, or logit}}
+\]
+
+\begin{plainenglish}[Odds in one sentence]
+The odds is how many times more likely the event is than the non-event: a
+probability of $0.75$ means the event is three times more likely than not, so the
+odds are $3$, often written ``3 to 1''.
+\end{plainenglish}
+
+<<odds-table>>=
+p      <- c(0.01, 0.10, 0.25, 0.50, 0.75, 0.90, 0.99)
+odds   <- p / (1 - p)
+logodds <- log(odds)
+data.frame(probability = p, odds = round(odds, 3), log_odds = round(logodds, 3))
+@
+
+Look at what each column does at the extremes:
+
+\begin{itemize}
+  \item \textbf{Probability} is trapped between 0 and 1. Useless as a regression outcome.
+  \item \textbf{Odds} runs from 0 to $\infty$. Better, but still one-sided, and
+        it is not symmetric: doubling from $0.4$ to $0.8$ in probability is a very
+        different jump from $0.1$ to $0.2$.
+  \item \textbf{Log-odds} runs from $-\infty$ to $+\infty$ and is symmetric around
+        zero. $p = 0.5$ gives log-odds $0$. Perfect for a linear predictor.
+\end{itemize}
+
+<<logit-shape, fig.width=9, fig.height=3.4, out.width="\\textwidth", fig.cap="Left: the logit transformation stretches probabilities near 0 and 1 out towards infinity. Right: the inverse, which is what the fitted model uses to turn a linear predictor back into a probability.">>=
+par(mfrow = c(1, 2)); par_book()
+pp <- seq(0.001, 0.999, length.out = 500)
+plot(pp, log(pp/(1-pp)), type = "l", lwd = 3, col = PAL["primary"],
+     xlab = "probability p", ylab = "logit(p)",
+     main = "logit: (0,1) stretched to the whole line")
+grid_book(); abline(h = 0, v = 0.5, lty = 3, col = PAL["accent"])
+
+plot(pp, log(pp/(1-pp)), type = "n", xlab = "logit(p)", ylab = "probability p",
+     xlim = c(-6, 6), ylim = c(0, 1), main = "and back again")
+grid_book()
+lines(seq(-6, 6, length.out = 400), plogis(seq(-6, 6, length.out = 400)),
+      lwd = 3, col = PAL["green"])
+abline(h = 0.5, v = 0, lty = 3, col = PAL["accent"])
+@
+
+\section{The model}
+
+For a binary outcome $y_i \in \{0,1\}$ with $\Pr(y_i = 1) = p_i$:
+\[
+y_i \sim \text{Bernoulli}(p_i), \qquad
+\log\!\left(\frac{p_i}{1-p_i}\right) = \beta_0 + \beta_1 x_{1i} + \dots + \beta_p x_{pi}.
+\]
+Equivalently, solving for $p_i$:
+\[
+p_i = \frac{1}{1 + e^{-\eta_i}} = \frac{e^{\eta_i}}{1 + e^{\eta_i}}.
+\]
+
+\section{A worked example: low birth weight}
+
+The \fn{birthwt} data records 189 births at a US hospital. The outcome \fn{low} is
+1 if the baby weighed under 2.5\,kg. We will model it from the mother's
+characteristics.
+
+<<bw-setup>>=
+data(birthwt, package = "MASS")
+bw <- within(birthwt, {
+  race  <- factor(race, levels = 1:3, labels = c("white", "black", "other"))
+  smoke <- factor(smoke, levels = 0:1, labels = c("no", "yes"))
+  ht    <- factor(ht,    levels = 0:1, labels = c("no", "yes"))
+  ui    <- factor(ui,    levels = 0:1, labels = c("no", "yes"))
+})
+str(bw[, c("low", "age", "lwt", "race", "smoke", "ht", "ui")])
+table(bw$low)
+@
+
+So \Sexpr{sum(bw$low)} of \Sexpr{nrow(bw)} babies (\Sexpr{round(100*mean(bw$low),1)}\%)
+were low birth weight. Always look at this before modelling: if the outcome is very
+rare, you will need a lot of data to estimate anything precisely.
+
+\begin{rulebox}[Events per variable]
+A common guideline is at least 10 events \emph{and} 10 non-events for each
+coefficient you estimate. With \Sexpr{sum(bw$low)} events here, models with more
+than about 5 predictors start to be optimistic. This guideline is soft --- more
+recent work suggests it can be relaxed or tightened depending on the signal --- but
+it stops you from fitting 15 predictors to 30 events.
+\end{rulebox}
+
+\subsection{Fitting}
+
+<<bw-fit>>=
+fit1 <- glm(low ~ age + lwt + race + smoke + ht + ui,
+            family = binomial(link = "logit"), data = bw)
+summary(fit1)
+@
+
+\subsection{Reading the coefficients}
+
+Everything in the \fn{Estimate} column is a change in \emph{log-odds}. Nobody
+thinks in log-odds. Exponentiate:
+
+<<bw-or>>=
+or <- exp(cbind(OR = coef(fit1), confint(fit1)))
+round(or, 3)
+@
+
+Now read them as multipliers of the odds:
+
+\begin{itemize}
+  \item \fn{smokeyes}: OR $=$ \Sexpr{round(exp(coef(fit1))["smokeyes"], 2)}. Mothers
+        who smoked had about \Sexpr{round(exp(coef(fit1))["smokeyes"], 1)} times the
+        odds of a low-birth-weight baby, holding the other variables fixed.
+  \item \fn{lwt}: OR $=$ \Sexpr{round(exp(coef(fit1))["lwt"], 3)}, i.e.\ each extra
+        pound of the mother's weight multiplies the odds by
+        \Sexpr{round(exp(coef(fit1))["lwt"], 3)} --- a
+        \Sexpr{abs(round((exp(coef(fit1))["lwt"] - 1) * 100, 1))}\% \emph{decrease}
+        per pound. Small per pound, but over 30 pounds it compounds to a factor of
+        \Sexpr{round(exp(30 * coef(fit1)["lwt"]), 2)}.
+  \item \fn{raceblack} and \fn{raceother}: these are compared with \fn{white},
+        because \fn{white} is the first level of the factor and \R{} makes the
+        first level the reference.
+\end{itemize}
+
+\begin{keyidea}[The three-part sentence for an odds ratio]
+``Holding the other variables constant, a \textit{one-unit increase in X} is
+associated with the odds of \textit{Y} being multiplied by \textit{exp(beta)},
+95\% CI \textit{[lower, upper]}.'' If you write every result in that shape you
+will never misreport a logistic regression.
+\end{keyidea}
+
+\subsection{Rescaling to make a coefficient readable}
+
+An odds ratio ``per pound'' is awkward. Rescale the variable to a meaningful unit
+before fitting, or multiply the coefficient afterwards:
+
+<<bw-rescale>>=
+## Per 10 pounds instead of per pound
+exp(10 * coef(fit1)["lwt"])
+## Or refit with a rescaled variable -- same thing, easier to report
+fit1b <- update(fit1, . ~ . - lwt + I(lwt / 10))
+round(exp(cbind(OR = coef(fit1b), confint.default(fit1b))), 3)["I(lwt/10)", ]
+@
+
+\begin{warningbox}[Odds ratios are not risk ratios]
+An odds ratio of 3 does \emph{not} mean the event is three times as likely. When
+the outcome is rare (say under 10\%) the two are close, but when it is common they
+diverge badly. If the baseline probability is 0.4, an OR of 3 corresponds to a
+probability of 0.67 --- a risk ratio of only 1.7, not 3. Say ``odds'' when you mean
+odds.
+\end{warningbox}
+
+<<or-vs-rr, fig.width=7, fig.height=3.6, out.width="0.8\\textwidth", fig.cap="How far an odds ratio is from the corresponding risk ratio, as the baseline probability rises. They only agree for rare outcomes.">>=
+par_book()
+p0 <- seq(0.005, 0.6, length.out = 300)
+for (OR in c(1.5, 2, 3, 5)) {
+  odds1 <- OR * p0 / (1 - p0)
+  p1 <- odds1 / (1 + odds1)
+  rr <- p1 / p0
+  if (OR == 1.5) {
+    plot(p0, rr, type = "l", lwd = 2.5, col = PAL["primary"], ylim = c(1, 5.2),
+         xlab = "baseline probability", ylab = "corresponding risk ratio",
+         main = "An odds ratio overstates the risk ratio")
+    grid_book()
+  } else {
+    lines(p0, rr, lwd = 2.5,
+          col = c(PAL["accent"], PAL["green"], PAL["red"])[which(c(2,3,5) == OR)])
+  }
+  abline(h = OR, lty = 3, col = PAL["grey"])
+}
+legend("topright", bty = "n", cex = 0.8, lwd = 2.5,
+       col = c(PAL["primary"], PAL["accent"], PAL["green"], PAL["red"]),
+       legend = paste("OR =", c(1.5, 2, 3, 5)))
+@
+
+\section{Predicted probabilities}
+
+Coefficients answer ``how much does this change things?''. Predicted probabilities
+answer ``what actually happens to a specific person?'' --- and are usually far more
+persuasive to a non-statistical audience.
+
+<<bw-predict>>=
+newdat <- expand.grid(
+  age   = 25,
+  lwt   = seq(80, 250, by = 5),
+  race  = "white",
+  smoke = c("no", "yes"),
+  ht    = "no",
+  ui    = "no"
+)
+pr <- predict(fit1, newdata = newdat, type = "link", se.fit = TRUE)
+newdat$fit <- plogis(pr$fit)
+newdat$lo  <- plogis(pr$fit - 1.96 * pr$se.fit)
+newdat$hi  <- plogis(pr$fit + 1.96 * pr$se.fit)
+head(newdat[, c("lwt", "smoke", "fit", "lo", "hi")], 4)
+@
+
+\begin{keyidea}[Always build intervals on the link scale]
+Compute the confidence interval for $\eta$ (where the normal approximation is
+good), \emph{then} push both endpoints through \fn{plogis}. If you build the
+interval directly on the probability scale you can get limits below 0 or above 1.
+\end{keyidea}
+
+<<bw-predict-plot, fig.width=7.5, fig.height=4.2, out.width="0.85\\textwidth", fig.cap="Fitted probability of low birth weight against the mother's weight, for smokers and non-smokers, with 95\\% confidence bands. This is the plot to put in a report.">>=
+par_book()
+sm <- subset(newdat, smoke == "yes"); ns <- subset(newdat, smoke == "no")
+plot(newdat$lwt, newdat$fit, type = "n", ylim = c(0, 0.85),
+     xlab = "mother's weight at last period (lbs)",
+     ylab = "P(low birth weight)",
+     main = "Fitted probabilities, 25-year-old white mother, no HT/UI")
+grid_book()
+polygon(c(sm$lwt, rev(sm$lwt)), c(sm$lo, rev(sm$hi)),
+        col = adjustcolor(PAL["red"], 0.15), border = NA)
+polygon(c(ns$lwt, rev(ns$lwt)), c(ns$lo, rev(ns$hi)),
+        col = adjustcolor(PAL["primary"], 0.15), border = NA)
+lines(sm$lwt, sm$fit, lwd = 3, col = PAL["red"])
+lines(ns$lwt, ns$fit, lwd = 3, col = PAL["primary"])
+legend("topright", bty = "n", lwd = 3, col = c(PAL["red"], PAL["primary"]),
+       legend = c("smoker", "non-smoker"), cex = 0.85)
+rug(bw$lwt, col = adjustcolor(PAL["grey"], 0.6))
+@
+
+The \fn{rug} at the bottom shows where the data actually are. Notice the
+confidence band widens where there are few mothers --- above about 200 pounds the
+model is extrapolating and you should not trust it.
+
+\section{Categorical predictors and reference levels}
+
+\R{} turns a factor with $k$ levels into $k-1$ dummy variables, all compared with
+the reference level. You control which level is the reference:
+
+<<relevel>>=
+levels(bw$race)                        # reference is the first level
+bw$race2 <- relevel(bw$race, ref = "other")
+fit_rl <- glm(low ~ smoke + race2, family = binomial, data = bw)
+round(exp(coef(fit_rl)), 3)
+@
+
+To test a factor \emph{as a whole} (all its levels at once) you need a single test
+with the right degrees of freedom, not a glance at the individual $p$-values:
+
+<<anova-factor>>=
+anova(fit1, test = "LRT")
+@
+
+That table adds terms one at a time in the order you wrote them and gives a
+likelihood-ratio test for each. \fn{race} has 2 degrees of freedom because it has
+three levels. Chapter 13 goes into these tests properly.
+
+\begin{warningbox}[Order matters in \fn{anova()}]
+\fn{anova.glm} produces \emph{sequential} (Type I) tests. Change the order of terms
+in the formula and the numbers change. For order-independent tests use
+\fn{car::Anova(fit1, type = "II")}.
+\end{warningbox}
+
+<<car-anova>>=
+car::Anova(fit1, type = "II", test.statistic = "LR")
+@
+
+\section{Interactions on the logit scale}
+
+An interaction means the effect of one variable depends on another. On the logit
+scale it is a ratio of odds ratios.
+
+<<interaction>>=
+fit_int <- glm(low ~ smoke * ht + lwt, family = binomial, data = bw)
+round(exp(coef(fit_int)), 3)
+@
+
+Because the model is multiplicative, the odds ratio for smoking among mothers
+\emph{with} hypertension is the product of the main effect and the interaction
+term. It is far safer to let \pkg{emmeans} do this arithmetic:
+
+<<emmeans-int>>=
+library(emmeans)
+emm <- emmeans(fit_int, ~ smoke | ht, type = "response")
+pairs(emm, reverse = TRUE)
+@
+
+\begin{plainenglish}[What that table says]
+It gives the smoking odds ratio separately within each hypertension group, with
+the standard errors worked out correctly. Doing this by hand from the coefficient
+table is possible but easy to get wrong, especially with factors of more than two
+levels.
+\end{plainenglish}
+
+\begin{warningbox}[Interactions are hungry]
+An interaction between two binary variables splits your events into four cells.
+With \Sexpr{sum(bw$low)} events, a smoke $\times$ hypertension interaction is
+estimated from very few observations --- look at the standard error above. Wide
+intervals here are honest, not a failure.
+\end{warningbox}

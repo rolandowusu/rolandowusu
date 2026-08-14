@@ -1,0 +1,201 @@
+\chapter{Cheat sheets}
+
+\section{Which model do I fit?}
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.34\textwidth}p{0.60\textwidth}@{}}
+\toprule
+\textbf{Situation} & \textbf{\R{} call} \\
+\midrule
+Yes/no outcome & \fn{glm(y \textasciitilde{} x, binomial)} \\
+$k$ of $n$ successes & \fn{glm(cbind(k, n-k) \textasciitilde{} x, binomial)} \\
+Proportions, overdispersed & \fn{glm(\dots, quasibinomial)} or \fn{glmmTMB(\dots, betabinomial)} \\
+Count, dispersion $\approx 1$ & \fn{glm(y \textasciitilde{} x, poisson)} \\
+Count, unequal exposure & \fn{glm(y \textasciitilde{} x + offset(log(t)), poisson)} \\
+Count, dispersion $> 1$ & \fn{MASS::glm.nb(y \textasciitilde{} x)} \\
+Count, dispersion $> 1$, want Poisson estimates & \fn{glm(\dots, quasipoisson)} \\
+Count, dispersion $< 1$ & \fn{glm(\dots, quasipoisson)} or \fn{glmmTMB(\dots, compois)} \\
+Count, extra zeros & \fn{pscl::zeroinfl(y \textasciitilde{} x | z)} \\
+Count, two-stage process & \fn{pscl::hurdle(y \textasciitilde{} x | z)} \\
+Count, zeros impossible & \fn{pscl::hurdle(y \textasciitilde{} x | 1)} \\
+Clustered data & \fn{lme4::glmer(y \textasciitilde{} x + (1|g), family)} \\
+Clustered + overdispersed count & \fn{glmmTMB(y \textasciitilde{} x + (1|g), nbinom2)} \\
+Clustered + zero-inflated & \fn{glmmTMB(\dots, ziformula = \textasciitilde{} 1)} \\
+Population-average effects & \fn{geepack::geeglm(\dots, id = g)} \\
+Non-linear predictor effects & \fn{mgcv::gam(y \textasciitilde{} s(x), family)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{How do I interpret this coefficient?}
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.16\textwidth}p{0.18\textwidth}p{0.60\textwidth}@{}}
+\toprule
+\textbf{Link} & \textbf{Transform} & \textbf{Sentence} \\
+\midrule
+identity & none & ``\dots is associated with a change of $\beta$ units in $y$.'' \\
+logit & $e^{\beta}$ & ``\dots multiplies the \emph{odds} of the outcome by $e^{\beta}$.'' \\
+log & $e^{\beta}$ & ``\dots multiplies the expected \emph{count} (or rate) by $e^{\beta}$.'' \\
+log, small $\beta$ & $100\beta$ & ``\dots changes the expected count by about $100\beta$\%.'' \\
+probit & --- & ``\dots changes the underlying latent score by $\beta$ SDs.'' \\
+cloglog & $e^{\beta}$ & ``\dots multiplies the \emph{hazard} of the event by $e^{\beta}$.'' \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{The essential diagnostic code}
+
+<<cheat-diag, eval=FALSE>>=
+## ---- Dispersion --------------------------------------------------------
+sum(residuals(m, type = "pearson")^2) / df.residual(m)      # want ~ 1
+AER::dispersiontest(m, trafo = 2)                            # formal test
+
+## ---- Zeros -------------------------------------------------------------
+c(observed = sum(y == 0), expected = sum(dpois(0, fitted(m))))
+
+## ---- Randomised quantile residuals ------------------------------------
+qres <- function(y, pfun, ...) {
+  a <- pfun(y - 1, ...); b <- pfun(y, ...)
+  qnorm(pmin(pmax(runif(length(y), pmin(a,b), pmax(a,b)), 1e-10), 1 - 1e-10))
+}
+r <- qres(y, ppois, lambda = fitted(m))         # or pnbinom(mu=, size=)
+qqnorm(r); qqline(r)
+plot(fitted(m), r); abline(h = 0)
+
+## ---- Simulation-based check -------------------------------------------
+s <- simulate(m, nsim = 500)
+mean(apply(s, 2, function(z) mean(z == 0)) >= mean(y == 0))
+
+## ---- Influence ---------------------------------------------------------
+plot(cooks.distance(m), type = "h"); abline(h = 4 / nobs(m), lty = 2)
+
+## ---- Mixed models ------------------------------------------------------
+lme4::isSingular(m)               # TRUE = simplify the random structure
+lme4::allFit(m)                   # do all optimisers agree?
+performance::check_model(m)       # if you have the performance package
+@
+
+\section{Model comparison quick reference}
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.26\textwidth}p{0.24\textwidth}p{0.46\textwidth}@{}}
+\toprule
+\textbf{Comparison} & \textbf{Tool} & \textbf{Notes} \\
+\midrule
+Nested, same family & \fn{anova(m1, m2, test="LRT")} & The default choice \\
+Nested, quasi-family & \fn{anova(m1, m2, test="F")} & No likelihood available \\
+Poisson vs NB & \fn{pscl::odTest} & Halves the $p$-value (boundary parameter) \\
+Non-nested & AIC / BIC & Only within the same response scale \\
+ZI vs hurdle & \fn{pscl::vuong} & Legitimate here; not for ZIP vs Poisson \\
+Fixed effects in a GLMM & \fn{anova} with \fn{REML=FALSE} & Must refit with ML \\
+Random effects in a GLMM & \fn{anova(m1, m2)} & $p$-value is conservative (boundary) \\
+Predictive accuracy & cross-validation & Score with log-likelihood, not just MAE \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Ten mistakes to avoid}
+
+\begin{enumerate}
+  \item \textbf{Reporting raw coefficients from a log or logit model.}
+        Exponentiate them.
+  \item \textbf{Forgetting \fn{type = "response"} in \fn{predict()}.} You get the
+        link scale and will not notice until the numbers look strange.
+  \item \textbf{Forgetting the offset} when exposure varies. This can reverse the
+        direction of an effect (Chapter 6).
+  \item \textbf{Ignoring overdispersion.} Your $p$-values will be several times
+        too small (Chapter 7).
+  \item \textbf{Calling an odds ratio a risk ratio.} They only agree for rare
+        outcomes.
+  \item \textbf{Reaching for zero-inflation because there are lots of zeros.} A
+        Poisson with mean 0.5 is 61\% zeros. Compare observed with \emph{predicted}
+        zeros.
+  \item \textbf{Ignoring clustering.} Repeated measures need random effects or
+        cluster-robust standard errors.
+  \item \textbf{Comparing AIC across different response scales} --- e.g.\ a model
+        for \fn{y} against a model for \fn{log(y)}.
+  \item \textbf{Trusting a stepwise-selected model's $p$-values.} They are not
+        valid after selection.
+  \item \textbf{Blaming the distribution when the mean model is wrong.} Check for
+        missing predictors and curvature before switching families.
+\end{enumerate}
+
+\section{Glossary}
+
+\begin{center}
+\small\sffamily
+\begin{longtable}{@{}p{0.26\textwidth}p{0.70\textwidth}@{}}
+\toprule
+\textbf{Term} & \textbf{Meaning} \\
+\midrule
+\endhead
+AIC & $-2\ell + 2k$. Lower is better; compares non-nested models on the same data. \\
+BLUP & Best linear unbiased predictor --- the estimated random effect for a group. \\
+Canonical link & The link that makes the maths cleanest: logit for binomial, log for Poisson. \\
+Deviance & GLM analogue of the residual sum of squares. \\
+Dispersion ($\phi$) & Ratio of actual variance to what the family assumes. \\
+GEE & Generalised estimating equations: marginal models with robust standard errors. \\
+GLM & Generalised linear model: family + linear predictor + link. \\
+GLMM & GLM with random effects. \\
+ICC & Proportion of variance that is between groups. \\
+IRR & Incidence rate ratio, $e^{\beta}$ from a log link. \\
+Link function & Maps the mean onto the unrestricted linear-predictor scale. \\
+Linear predictor ($\eta$) & $\beta_0 + \beta_1x_1 + \dots$ \\
+Marginal effect & Population-average effect, averaged over random effects. \\
+Conditional effect & Effect within a given cluster; what a GLMM reports. \\
+NB1 / NB2 & Negative binomial with variance linear ($\mu(1+\alpha)$) / quadratic ($\mu + \mu^2/\theta$) in the mean. \\
+Odds & $p/(1-p)$. \\
+Odds ratio & Ratio of two odds; $e^{\beta}$ from a logit link. \\
+Offset & A predictor with its coefficient fixed at 1; used for exposure. \\
+OLRE & Observation-level random effect; absorbs overdispersion in a GLMM. \\
+Overdispersion & Variance exceeds what the assumed family allows. \\
+Pearson residual & $(y - \hat\mu)/\sqrt{V(\hat\mu)}$. \\
+Quantile residual & Simulation-based residual that is normal when the model is right. \\
+Quasi-likelihood & Specifies only mean and variance, not a full distribution. \\
+REML & Restricted maximum likelihood; less biased variance components. \\
+Rootogram & Plot of observed vs expected count frequencies on a square-root scale. \\
+Sandwich estimator & Variance estimate robust to a misspecified variance function. \\
+Separation & A predictor perfectly predicts the outcome; estimates diverge. \\
+Shrinkage & Pulling group estimates towards the overall mean. \\
+Theta ($\theta$) & Negative binomial dispersion parameter; large $\theta$ $\to$ Poisson. \\
+Zero-inflation & Extra zeros from a separate ``structural zero'' process. \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\section{Where to go next}
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.44\textwidth}p{0.52\textwidth}@{}}
+\toprule
+\textbf{Topic} & \textbf{Suggested reading} \\
+\midrule
+GLMs in general & Dobson \& Barnett, \emph{An Introduction to Generalized Linear Models} \\
+Applied logistic regression & Hosmer, Lemeshow \& Sturdivant, \emph{Applied Logistic Regression} \\
+Count data & Cameron \& Trivedi, \emph{Regression Analysis of Count Data} \\
+Count models in \R & Zeileis, Kleiber \& Jackman, ``Regression Models for Count Data in R'', \emph{Journal of Statistical Software} 27(8) \\
+Mixed models & Gelman \& Hill, \emph{Data Analysis Using Regression and Multilevel/Hierarchical Models} \\
+Mixed models in \R & Bates et al., ``Fitting Linear Mixed-Effects Models Using lme4'', \emph{JSS} 67(1) \\
+GLMMs in ecology & Bolker et al.\ (2009), \emph{Trends in Ecology \& Evolution} 24(3) \\
+glmmTMB & Brooks et al.\ (2017), \emph{The R Journal} 9(2) \\
+Quantile residuals & Dunn \& Smyth (1996), \emph{Journal of Computational and Graphical Statistics} 5(3) \\
+Rootograms & Kleiber \& Zeileis (2016), \emph{The American Statistician} 70(3) \\
+Bayesian versions of everything here & McElreath, \emph{Statistical Rethinking}; the \pkg{brms} package \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vfill
+
+\begin{keyidea}[The last word]
+Every model in this book is a claim about how your data were generated. The
+arithmetic will run whatever you claim. The whole craft lies in checking whether
+the claim is defensible --- which is why the diagnostic chapters matter more than
+the fitting ones. Fit the simple model, look hard at how it fails, and let the
+failure tell you what to fit next.
+\end{keyidea}

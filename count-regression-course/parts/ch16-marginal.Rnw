@@ -1,0 +1,236 @@
+\chapter{Conditional vs marginal effects, and GEE}
+
+\section{Two different questions}
+
+Take a logistic mixed model for whether patients recover, with a random effect per
+hospital. There are two sensible questions you might be asking:
+
+\begin{enumerate}
+  \item \textbf{Conditional (subject-specific).} ``For a \emph{given hospital},
+        how much does the treatment change the odds of recovery?''
+  \item \textbf{Marginal (population-average).} ``Across \emph{all hospitals},
+        how much does the treatment change the odds of recovery?''
+\end{enumerate}
+
+For a linear model these are the same number. For a logistic model they are
+not --- and the difference can be large.
+
+\begin{plainenglish}[Why they differ]
+The inverse-logit curve is bent. Averaging probabilities across hospitals and then
+converting to odds is not the same as converting each hospital's odds and then
+averaging. Whenever the link is non-linear, ``average of the effects'' and ``effect
+on the average'' part company.
+\end{plainenglish}
+
+\section{Seeing the attenuation}
+
+<<attenuation-sim>>=
+set.seed(123)
+n_g <- 200; n_per <- 20
+g   <- rep(1:n_g, each = n_per)
+x   <- rbinom(n_g * n_per, 1, 0.5)
+u   <- rep(rnorm(n_g, 0, 2), each = n_per)     # big between-group variation
+eta <- -0.5 + 1.5 * x + u                      # TRUE conditional effect = 1.5
+y   <- rbinom(length(eta), 1, plogis(eta))
+d   <- data.frame(y, x, g = factor(g))
+
+m_cond <- lme4::glmer(y ~ x + (1 | g), family = binomial, data = d)
+m_marg <- glm(y ~ x, family = binomial, data = d)
+round(c(true_conditional = 1.5,
+        glmm_conditional = lme4::fixef(m_cond)["x"],
+        glm_marginal     = coef(m_marg)["x"]), 3)
+@
+
+The mixed model estimates
+\Sexpr{round(lme4::fixef(m_cond)["x"], 2)}, in the region of the true conditional
+effect of 1.5. The ordinary logistic regression returns
+\Sexpr{round(coef(m_marg)["x"], 2)} --- far below it, and nowhere near the truth we
+put in. That gap is not sampling error and it is not bias: the two models are
+estimating genuinely different quantities, and only one of them is the number we
+simulated.
+
+There is a good approximation for how much the marginal effect shrinks:
+\[
+\beta_{\text{marginal}} \approx \frac{\beta_{\text{conditional}}}
+{\sqrt{1 + 0.346\,\sigma_u^2}}
+\]
+
+<<attenuation-formula>>=
+sig2 <- as.data.frame(lme4::VarCorr(m_cond))$vcov[1]
+round(c(conditional = lme4::fixef(m_cond)["x"],
+        predicted_marginal = lme4::fixef(m_cond)["x"] / sqrt(1 + 0.346 * sig2),
+        actual_marginal = coef(m_marg)["x"]), 3)
+@
+
+<<attenuation-plot, fig.width=7.4, fig.height=4.2, out.width="0.82\\textwidth", fig.cap="Thin grey curves are individual groups, each with the same conditional slope. Their average (the thick orange curve) is visibly flatter than any of them: that flattening is the attenuation of the marginal effect.">>=
+par_book()
+xs <- seq(-4, 4, length.out = 300)
+plot(xs, plogis(xs), type = "n", ylim = c(0, 1), xlab = "linear predictor for x = 0",
+     ylab = "probability", main = "Averaging bent curves flattens them")
+grid_book()
+us <- rnorm(60, 0, 2)
+for (u_ in us) lines(xs, plogis(xs + u_), col = adjustcolor(PAL["grey"], 0.5), lwd = 1)
+avg <- sapply(xs, function(z) mean(plogis(z + us)))
+lines(xs, plogis(xs), lwd = 3, col = PAL["primary"])
+lines(xs, avg, lwd = 4, col = PAL["accent"])
+legend("topleft", bty = "n", cex = 0.8, lwd = c(1, 3, 4),
+       col = c(PAL["grey"], PAL["primary"], PAL["accent"]),
+       legend = c("individual groups", "a typical group (u = 0)",
+                  "average across groups"))
+@
+
+\begin{keyidea}[The exception that saves count models]
+For a \textbf{log} link --- Poisson and negative binomial --- the slope
+coefficients are the \emph{same} conditionally and marginally. Only the intercept
+shifts, by $\sigma_u^2/2$. That is because $\E[e^{u}] = e^{\sigma_u^2/2}$ is a
+constant multiplier that the log link absorbs entirely into the intercept. So this
+whole headache applies to logistic mixed models, not to Poisson ones.
+\end{keyidea}
+
+<<log-link-invariance>>=
+set.seed(9)
+u2 <- rep(rnorm(300, 0, 0.8), each = 8)
+x2 <- rnorm(2400)
+y2 <- rpois(2400, exp(0.5 + 0.7 * x2 + u2))
+d2 <- data.frame(y2, x2, g2 = factor(rep(1:300, each = 8)))
+round(c(true_slope = 0.7,
+        glmm  = lme4::fixef(lme4::glmer(y2 ~ x2 + (1 | g2), family = poisson, data = d2))["x2"],
+        glm   = coef(glm(y2 ~ x2, family = poisson, data = d2))["x2"]), 3)
+@
+
+Both recover 0.7. The slopes agree, exactly as the theory says.
+
+\section{Generalised estimating equations (GEE)}
+
+If the population-average effect is what you want, you can estimate it directly.
+GEE models the marginal mean, specifies a \emph{working} correlation structure
+within clusters, and then computes robust standard errors that stay valid even if
+that working structure is wrong.
+
+<<gee-fit>>=
+library(geepack)
+data(epil, package = "MASS")
+epil$lbase <- log(epil$base / 4)
+epil <- epil[order(epil$subject), ]              # GEE requires sorted clusters
+
+gee_ex <- geeglm(y ~ lbase + trt, id = subject, family = poisson,
+                 corstr = "exchangeable", data = epil)
+summary(gee_ex)
+@
+
+<<gee-corstr>>=
+gee_ind <- geeglm(y ~ lbase + trt, id = subject, family = poisson,
+                  corstr = "independence", data = epil)
+gee_ar1 <- geeglm(y ~ lbase + trt, id = subject, family = poisson,
+                  corstr = "ar1", data = epil)
+round(cbind(
+  independence = coef(gee_ind),
+  exchangeable = coef(gee_ex),
+  ar1          = coef(gee_ar1)
+), 4)
+round(cbind(
+  se_independence = coef(summary(gee_ind))[, 2],
+  se_exchangeable = coef(summary(gee_ex))[, 2],
+  se_ar1          = coef(summary(gee_ar1))[, 2]
+), 4)
+@
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.22\textwidth}p{0.40\textwidth}p{0.34\textwidth}@{}}
+\toprule
+\textbf{\fn{corstr}} & \textbf{Assumes} & \textbf{Use when} \\
+\midrule
+\fn{"independence"} & no within-cluster correlation & always safe; least efficient \\
+\fn{"exchangeable"} & every pair equally correlated & clustering with no natural order (pupils in schools) \\
+\fn{"ar1"} & correlation decays with distance in time & evenly spaced repeated measures \\
+\fn{"unstructured"} & every pair its own correlation & few time points, many clusters \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Choose between them with the QIC, GEE's analogue of AIC:
+
+<<qic>>=
+round(rbind(independence = QIC(gee_ind),
+            exchangeable = QIC(gee_ex),
+            ar1          = QIC(gee_ar1)), 1)
+@
+
+\begin{plainenglish}[Why the working structure matters less than you would think]
+The robust ``sandwich'' standard errors are consistent even if the working
+correlation is wrong. Getting it approximately right buys efficiency --- narrower
+intervals --- not validity. That is GEE's central selling point.
+\end{plainenglish}
+
+\section{GLMM or GEE?}
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.26\textwidth}p{0.35\textwidth}p{0.35\textwidth}@{}}
+\toprule
+ & \textbf{GLMM} & \textbf{GEE} \\
+\midrule
+Estimates & subject-specific (conditional) & population-average (marginal) \\
+Random effects & explicitly modelled & not modelled, only adjusted for \\
+Gives you $\sigma_u^2$, ICC & yes & no \\
+Predict for a specific cluster & yes & no \\
+Predict for a new cluster & yes & only the average \\
+Handles missing data & MAR & MCAR (unless weighted) \\
+Needs many clusters & works with moderate numbers & prefers 40+ \\
+Likelihood, AIC & yes & no (QIC instead) \\
+Computationally & slower, can fail to converge & fast and robust \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{rulebox}[Which to use]
+\textbf{GLMM} when the clusters themselves are of interest --- you want to know how
+much hospitals vary, or to predict for a specific hospital, or the clustering is
+part of the science. \\
+\textbf{GEE} when clusters are a nuisance to be adjusted for, and you want a policy
+statement about the population: ``if everybody switched treatment, the average rate
+would change by this much.'' \\
+\textbf{Either} for Poisson or negative binomial slopes --- they agree.
+\end{rulebox}
+
+\section{Getting marginal effects out of a GLMM}
+
+You do not have to abandon the mixed model to get a population-average answer.
+Integrate the fitted model over the random-effect distribution:
+
+<<marginal-from-glmm>>=
+data(cbpp, package = "lme4")
+m_glmm <- lme4::glmer(cbind(incidence, size - incidence) ~ period + (1 | herd),
+                      family = binomial, data = cbpp)
+sig <- sqrt(as.data.frame(lme4::VarCorr(m_glmm))$vcov[1])
+nd  <- data.frame(period = factor(1:4))
+eta <- predict(m_glmm, newdata = nd, re.form = NA)      # conditional on u = 0
+
+## Average the probability over the distribution of the random effect
+marg <- sapply(eta, function(e)
+  integrate(function(u) plogis(e + u) * dnorm(u, 0, sig), -8 * sig, 8 * sig)$value)
+
+round(data.frame(period = 1:4,
+                 conditional_u0 = plogis(eta),
+                 population_average = marg), 4)
+@
+
+The population-average probabilities are pulled towards 0.5 relative to the
+typical-herd probabilities, which is the same attenuation seen earlier.
+
+The \pkg{emmeans} package will do this for you, and gives standard errors too:
+
+<<emmeans-marginal>>=
+library(emmeans)
+emmeans(m_glmm, ~ period, type = "response", bias.adjust = TRUE, sigma = sig)
+@
+
+\begin{keyidea}[The three numbers you can report, and what each means]
+\textbf{Conditional with $u = 0$:} a herd of exactly average latent risk. \\
+\textbf{Population average:} the mean across all herds --- what a policy-maker
+wants. \\
+\textbf{Conditional on a specific $u_j$:} that particular herd --- what its
+veterinarian wants. \\
+Say which one you are reporting. Most papers do not, and readers then cannot tell.
+\end{keyidea}

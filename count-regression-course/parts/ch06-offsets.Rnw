@@ -1,0 +1,207 @@
+\chapter{Rates, exposure and offsets}
+
+\section{The problem}
+
+Suppose two clinics report accident numbers. Clinic A saw 40 accidents, Clinic B
+saw 20. Which is more dangerous?
+
+You cannot say --- not until you know Clinic A serves 100{,}000 people and Clinic
+B serves 10{,}000. Then A's rate is 0.4 per thousand and B's is 2.0 per thousand,
+and B is five times worse.
+
+This is the single most common serious mistake in applied count regression:
+modelling the raw count when the observations had different amounts of
+\emph{exposure} --- different follow-up times, different populations at risk,
+different areas, different numbers of trials.
+
+\begin{plainenglish}[Offset in one sentence]
+An offset is a predictor whose coefficient you refuse to estimate because you
+already know it must be exactly 1, which is what turns a model for counts into a
+model for rates.
+\end{plainenglish}
+
+\section{The mathematics, which is short}
+
+You want to model the rate $\mu_i / t_i$, where $t_i$ is the exposure:
+\[
+\log\!\left(\frac{\mu_i}{t_i}\right) = \beta_0 + \beta_1 x_i.
+\]
+Split the log:
+\[
+\log(\mu_i) - \log(t_i) = \beta_0 + \beta_1 x_i
+\]
+\[
+\log(\mu_i) = \log(t_i) + \beta_0 + \beta_1 x_i.
+\]
+
+That $\log(t_i)$ sits in the linear predictor like a covariate --- but with its
+coefficient nailed to 1. That is precisely what \fn{offset()} does.
+
+\begin{keyidea}
+\fn{offset(log(exposure))}. Always the \emph{log} of the exposure, because the
+link is a log. Putting the raw exposure in an offset is a real and surprisingly
+common bug.
+\end{keyidea}
+
+\section{A simulated example where it matters}
+
+<<offset-sim>>=
+set.seed(42)
+n       <- 400
+region  <- factor(sample(c("urban", "rural"), n, replace = TRUE))
+## Person-years of follow-up differ a lot -- and urban areas are bigger
+pyears  <- round(exp(rnorm(n, mean = ifelse(region == "urban", 8.0, 6.5), sd = 0.6)))
+## TRUE rate is 30% HIGHER in rural areas
+true_rate <- ifelse(region == "rural", 0.0013, 0.0010)
+events  <- rpois(n, lambda = true_rate * pyears)
+dat     <- data.frame(events, pyears, region)
+aggregate(cbind(events, pyears) ~ region, data = dat, FUN = sum)
+@
+
+The truth we built in: the rural rate is 1.3 times the urban rate. Now fit the
+model two ways.
+
+<<offset-fits>>=
+## WRONG: ignores that urban areas were watched for far longer
+m_wrong <- glm(events ~ region, family = poisson, data = dat)
+
+## RIGHT: models the rate per person-year
+m_right <- glm(events ~ region + offset(log(pyears)), family = poisson, data = dat)
+
+round(cbind(
+  wrong_IRR = exp(coef(m_wrong)),
+  right_IRR = exp(coef(m_right))
+), 3)
+@
+
+The model without the offset reports a rural rate ratio of
+\Sexpr{round(exp(coef(m_wrong))["regionrural"], 2)} --- it says rural areas are
+\emph{safer}, and would be reported as strongly significant. The model with the
+offset recovers \Sexpr{round(exp(coef(m_right))["regionrural"], 2)}, close to the
+true 1.3. The first answer is not merely imprecise; it points the wrong way.
+
+<<offset-plot, fig.width=9, fig.height=3.8, out.width="\\textwidth", fig.cap="Left: raw counts make rural areas look safer, because they were observed for less time. Right: once expressed as rates per person-year, the true pattern appears.">>=
+par(mfrow = c(1, 2)); par_book()
+boxplot(events ~ region, data = dat, col = c(adjustcolor(PAL["primary"], 0.5),
+        adjustcolor(PAL["accent"], 0.5)), border = c(PAL["primary"], PAL["accent"]),
+        ylab = "raw event count", main = "Raw counts (misleading)")
+grid_book()
+boxplot(1000 * events / pyears ~ region, data = dat,
+        col = c(adjustcolor(PAL["primary"], 0.5), adjustcolor(PAL["accent"], 0.5)),
+        border = c(PAL["primary"], PAL["accent"]),
+        ylab = "events per 1000 person-years", main = "Rates (correct comparison)")
+grid_book()
+@
+
+\section{The alternative syntax}
+
+\R{} accepts the offset in the formula or as an argument. They are equivalent:
+
+<<offset-syntax>>=
+a <- glm(events ~ region + offset(log(pyears)), family = poisson, data = dat)
+b <- glm(events ~ region, offset = log(pyears), family = poisson, data = dat)
+all.equal(coef(a), coef(b))
+@
+
+\begin{rulebox}[Prefer the in-formula version]
+Writing \fn{offset(log(pyears))} inside the formula means \fn{predict()} on new
+data automatically knows it needs a \fn{pyears} column. With the separate
+\fn{offset =} argument you must remember to supply it yourself at prediction time,
+and forgetting is silent.
+\end{rulebox}
+
+\section{Predicting from a model with an offset}
+
+Two different questions, two different answers.
+
+<<offset-predict>>=
+## Q1: expected COUNT for a rural area observed for 2000 person-years
+predict(m_right, newdata = data.frame(region = "rural", pyears = 2000),
+        type = "response")
+
+## Q2: the underlying RATE per person-year -- set exposure to 1
+predict(m_right, newdata = data.frame(region = c("urban", "rural"), pyears = 1),
+        type = "response")
+
+## ... which is easier to read per 1000 person-years
+1000 * predict(m_right, newdata = data.frame(region = c("urban", "rural"), pyears = 1),
+               type = "response")
+@
+
+Setting exposure to 1 makes $\log(t) = 0$, which removes the offset from the linear
+predictor and leaves the pure rate.
+
+\section{When exposure is not time}
+
+Exposure means ``how much opportunity did this unit have for the event?''. It takes
+many forms:
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.34\textwidth}p{0.30\textwidth}p{0.32\textwidth}@{}}
+\toprule
+\textbf{Outcome} & \textbf{Exposure} & \textbf{Offset term} \\
+\midrule
+Hospital admissions per patient  & follow-up time     & \fn{offset(log(years))} \\
+Crimes per district              & population size    & \fn{offset(log(pop))} \\
+Defects per manufactured batch   & batch size         & \fn{offset(log(n\_items))} \\
+Species counts per plot          & plot area          & \fn{offset(log(area))} \\
+Insurance claims per policy      & policy-years       & \fn{offset(log(exposure))} \\
+Website conversions per campaign & impressions served & \fn{offset(log(impressions))} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Should the coefficient really be 1?}
+
+An offset assumes events scale exactly proportionally with exposure: double the
+population, double the accidents. That is usually right, but you can test it.
+Put the log-exposure in as an ordinary covariate and see whether its estimated
+coefficient is near 1:
+
+<<offset-test>>=
+m_free <- glm(events ~ region + log(pyears), family = poisson, data = dat)
+round(coef(summary(m_free))["log(pyears)", ], 4)
+
+## Formal test: is the offset model (coefficient fixed at 1) adequate?
+anova(m_right, m_free, test = "LRT")
+@
+
+The estimated coefficient is close to 1 and the likelihood-ratio test gives a large
+$p$-value, so fixing it at 1 is fine here.
+
+\begin{plainenglish}[If the coefficient is clearly not 1]
+Then the relationship is not proportional --- perhaps larger regions have
+economies of scale, or a saturating process. Leave \fn{log(exposure)} in as a free
+covariate and say so. You are no longer modelling a simple rate, and you should
+explain what you are modelling instead.
+\end{plainenglish}
+
+\section{A real-data example}
+
+The \fn{epil} data records seizure counts for epilepsy patients. Each patient
+contributes a baseline count over 8 weeks and four follow-up counts over 2 weeks
+each. The exposure differs between those periods, so the counts are not
+comparable without an offset.
+
+<<epil-offset>>=
+data(epil, package = "MASS")
+head(epil[, c("y", "trt", "base", "age", "period", "subject")], 5)
+
+## Model follow-up seizures per 2-week period, adjusting for the 8-week baseline
+epil$lbase <- log(epil$base / 4)          # baseline rescaled to a 2-week rate
+epil$lage  <- log(epil$age)
+me <- glm(y ~ lbase + trt + lage, family = poisson, data = epil)
+round(exp(cbind(IRR = coef(me), confint.default(me))), 3)
+@
+
+The treatment IRR of \Sexpr{round(exp(coef(me))["trtprogabide"], 3)} suggests a
+small reduction in seizure rate on progabide. But these are repeated measures on
+the same patients, so these standard errors are not trustworthy --- we return to
+this dataset properly in Chapter 15.
+
+\begin{warningbox}[Offsets do not fix clustering]
+An offset handles \emph{unequal opportunity}. It does nothing about
+\emph{non-independence}. If the same patient appears five times in your data, you
+still need a random effect or a robust standard error on top of the offset.
+\end{warningbox}

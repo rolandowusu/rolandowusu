@@ -1,0 +1,210 @@
+\chapter{The rest of the count family}
+
+Poisson, negative binomial, zero-inflated and hurdle models cover most of what you
+will meet. This chapter is a tour of the remaining members, so that you recognise
+them when a dataset calls for one.
+
+\section{Truncated counts}
+
+Sometimes zero is impossible \emph{by design}. Length of hospital stay in days is
+at least 1 for anyone in the sample, because you had to be admitted to be counted.
+Number of items bought is at least 1 for anyone in a purchase database. Fitting an
+ordinary Poisson to such data biases everything, because the model keeps assigning
+probability to a value that could never be observed.
+
+The zero-truncated Poisson has probability mass
+\[
+\Pr(Y = k \mid Y > 0) = \frac{e^{-\mu}\mu^{k}/k!}{1 - e^{-\mu}}, \qquad k = 1, 2, \dots
+\]
+--- the ordinary Poisson divided by the probability of not being zero. That
+denominator is the entire correction, and it is easy enough to fit directly.
+
+<<truncated>>=
+## Simulate counts, then throw away the zeros -- as the sampling process would
+set.seed(31)
+n <- 800
+x <- rnorm(n)
+y <- rpois(n, exp(0.7 + 0.8 * x))
+d <- data.frame(x, y)[y > 0, ]        # zeros are unobservable
+
+## Naive Poisson on the truncated sample: both coefficients are pulled away
+round(coef(glm(y ~ x, family = poisson, data = d)), 3)
+
+## Zero-truncated Poisson, fitted by maximising the truncated log-likelihood
+nll_ztp <- function(beta, y, X) {
+  mu <- exp(as.vector(X %*% beta))
+  -sum(dpois(y, mu, log = TRUE) - log(1 - exp(-mu)))   # divide by P(Y > 0)
+}
+X   <- model.matrix(~ x, data = d)
+fit <- optim(c(0, 0), nll_ztp, y = d$y, X = X, hessian = TRUE, method = "BFGS")
+round(rbind(estimate = fit$par,
+            se = sqrt(diag(solve(fit$hessian)))), 3)
+@
+
+The truth was $\beta_0 = 0.7$, $\beta_1 = 0.8$. The naive fit is noticeably off ---
+the intercept especially, because it is being asked to explain a sample with the
+zeros removed. The truncated fit recovers both.
+
+In practice you would use \fn{countreg::zerotrunc} or
+\fn{VGAM::vglm(\dots, family = pospoisson())} rather than writing the likelihood
+yourself, but seeing it written out makes clear that there is nothing mysterious
+going on.
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.28\textwidth}p{0.30\textwidth}p{0.38\textwidth}@{}}
+\toprule
+\textbf{Situation} & \textbf{Model} & \textbf{\R} \\
+\midrule
+Zeros impossible & zero-truncated Poisson/NB & \fn{hurdle(y \textasciitilde{} x | 1)}, or \pkg{VGAM}'s \fn{pospoisson} \\
+Counts capped at a maximum & binomial & \fn{cbind(y, max - y)} \\
+Counts only observed above a threshold & truncated at $k$ & \pkg{VGAM}, \pkg{countreg} \\
+Counts censored (``5 or more'') & censored count model & \pkg{VGAM} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Underdispersion and the Conway--Maxwell--Poisson}
+
+When counts are \emph{less} variable than Poisson --- regulated processes,
+scheduled events, clutch sizes in some birds --- the negative binomial cannot help.
+It only ever adds variance. Your options:
+
+\begin{itemize}
+  \item \textbf{Quasi-Poisson} with $\hat\phi < 1$. Simple and effective; it just
+        shrinks the standard errors.
+  \item \textbf{Binomial}, if a real upper bound exists.
+  \item \textbf{Conway--Maxwell--Poisson (COM-Poisson)}, which has an extra
+        parameter $\nu$ that handles both directions: $\nu > 1$ underdispersed,
+        $\nu = 1$ Poisson, $\nu < 1$ overdispersed. Available in the \pkg{COMPoissonReg}
+        and \pkg{glmmTMB} packages (\fn{family = compois}).
+  \item \textbf{Generalised Poisson}, similar idea, in \fn{glmmTMB} as
+        \fn{genpois}.
+\end{itemize}
+
+<<underdisp-fit>>=
+set.seed(12)
+du <- data.frame(x = rnorm(300))
+du$y <- rbinom(300, size = 10, prob = plogis(0.2 + 0.5 * du$x))   # underdispersed
+mu_p <- glm(y ~ x, family = poisson, data = du)
+c(dispersion = sum(residuals(mu_p, type = "pearson")^2) / df.residual(mu_p))
+
+library(glmmTMB)
+mu_cmp <- glmmTMB(y ~ x, family = compois, data = du)
+round(c(AIC_poisson = AIC(mu_p), AIC_compois = AIC(mu_cmp)), 1)
+@
+
+\section{Beta-binomial: overdispersion for proportions}
+
+The binomial's counterpart to the negative binomial. Let each unit's success
+probability be drawn from a beta distribution instead of being fixed, and the
+resulting counts are more variable than binomial. This is the principled fix for
+the overdispersed herd data of Chapter 4.
+
+<<betabinom>>=
+data(cbpp, package = "lme4")
+bb <- glmmTMB(cbind(incidence, size - incidence) ~ period,
+              family = betabinomial, data = cbpp)
+mb <- glm(cbind(incidence, size - incidence) ~ period, family = binomial, data = cbpp)
+round(c(AIC_binomial = AIC(mb), AIC_betabinomial = AIC(bb)), 1)
+round(cbind(binomial = coef(summary(mb))[, 2],
+            betabinomial = coef(summary(bb))$cond[, 2]), 4)
+@
+
+Same pattern as before: the coefficients barely move, the standard errors grow.
+
+\section{Ordinal and multinomial outcomes}
+
+Not counts, but they belong on the same map and people often arrive here looking
+for them.
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.30\textwidth}p{0.30\textwidth}p{0.36\textwidth}@{}}
+\toprule
+\textbf{Outcome} & \textbf{Model} & \textbf{\R} \\
+\midrule
+Ordered categories (mild / moderate / severe) & proportional odds & \fn{MASS::polr} \\
+Unordered categories (bus / car / train) & multinomial logit & \fn{nnet::multinom} \\
+Ordered, with random effects & ordinal GLMM & \fn{ordinal::clmm} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+<<polr>>=
+data(housing, package = "MASS")
+po <- MASS::polr(Sat ~ Infl + Type + Cont, weights = Freq, data = housing)
+round(exp(coef(po)), 3)         # proportional odds ratios
+@
+
+The proportional odds model says one odds ratio applies to \emph{every} cut-point
+of the ordinal scale. That assumption is worth testing --- fit a multinomial model
+and compare, or use \fn{brant::brant}.
+
+\section{When the relationship is not a straight line}
+
+A GLM assumes the effect of each predictor is linear \emph{on the link scale}. If
+it is not, you have three options, in increasing order of flexibility:
+
+<<gam-demo, fig.width=7.5, fig.height=4, out.width="0.82\\textwidth", fig.cap="A count outcome whose effect is genuinely curved. A straight-line log-link fit misses the shape entirely; a spline or a GAM recovers it.">>=
+set.seed(19)
+n  <- 400
+x  <- runif(n, 0, 10)
+mu <- exp(1 + 0.9 * sin(x / 1.6))       # a genuinely wiggly truth
+y  <- rpois(n, mu)
+dg <- data.frame(x, y)
+
+m_lin <- glm(y ~ x, family = poisson, data = dg)
+m_pol <- glm(y ~ poly(x, 5), family = poisson, data = dg)
+m_gam <- mgcv::gam(y ~ s(x), family = poisson, data = dg)
+
+par_book()
+xs <- data.frame(x = seq(0, 10, length.out = 300))
+plot(x, y, pch = 21, bg = adjustcolor(PAL["grey"], 0.35), col = "white", cex = 1,
+     xlab = "x", ylab = "count", main = "Linear vs polynomial vs smooth")
+grid_book()
+lines(xs$x, exp(1 + 0.9 * sin(xs$x / 1.6)), lwd = 3, col = PAL["grey"])
+lines(xs$x, predict(m_lin, xs, type = "response"), lwd = 2.5, col = PAL["red"])
+lines(xs$x, predict(m_pol, xs, type = "response"), lwd = 2.5, col = PAL["accent"])
+lines(xs$x, predict(m_gam, xs, type = "response"), lwd = 2.5, col = PAL["green"])
+legend("topright", bty = "n", cex = 0.75, lwd = c(3, 2.5, 2.5, 2.5),
+       col = c(PAL["grey"], PAL["red"], PAL["accent"], PAL["green"]),
+       legend = c("truth", "linear in x", "poly(x, 5)", "gam s(x)"))
+@
+
+<<gam-aic>>=
+round(c(linear = AIC(m_lin), poly5 = AIC(m_pol), gam = AIC(m_gam)), 1)
+@
+
+\begin{warningbox}[Curvature masquerades as overdispersion]
+The linear fit above will show a large dispersion statistic --- not because the
+Poisson is wrong, but because the mean model is. Always check the shape of your
+predictors before deciding the distribution is at fault.
+\end{warningbox}
+
+\section{Continuous non-negative outcomes}
+
+Costs, durations, biomass, rainfall: positive, skewed, but not counts. These are
+not covered by anything above.
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.34\textwidth}p{0.30\textwidth}p{0.32\textwidth}@{}}
+\toprule
+\textbf{Outcome} & \textbf{Model} & \textbf{\R} \\
+\midrule
+Positive, skewed, no zeros & Gamma with log link & \fn{glm(family = Gamma(log))} \\
+Positive, with exact zeros & Tweedie & \fn{glmmTMB(family = tweedie)} \\
+Proportion in $(0,1)$, not from counts & beta regression & \fn{betareg::betareg} \\
+Any of the above, and you only trust the mean & quasi-Poisson & \fn{family = quasipoisson} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{keyidea}[Quasi-Poisson for non-integers]
+A quasi-Poisson model does not require integer data --- it only assumes
+$\E(y) = \mu$ and $\Var(y) = \phi\mu$. This makes it a robust, surprisingly good
+choice for positive continuous outcomes when you want multiplicative effects and
+do not want to commit to a distribution. \R{} will warn about non-integer
+responses; for quasi-Poisson that warning is safe to ignore.
+\end{keyidea}

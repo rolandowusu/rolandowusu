@@ -1,0 +1,267 @@
+\chapter{When the model will not fit}
+
+Mixed models fail to converge more often than any other model in this book. This
+chapter is a field guide to the warnings and what to do about each one.
+
+\section{``boundary (singular) fit''}
+
+<<singular, warning=TRUE, message=TRUE>>=
+set.seed(15)
+d <- data.frame(g = factor(rep(1:8, each = 6)), x = rnorm(48))
+d$y <- 2 + 0.6 * d$x + rnorm(48)          # NO group effect at all
+m <- lme4::lmer(y ~ x + (1 | g), data = d)
+lme4::VarCorr(m)
+lme4::isSingular(m)
+@
+
+\begin{plainenglish}[What it means]
+A variance component was estimated as zero (or a correlation as exactly $\pm 1$).
+The model is sitting on the edge of its parameter space. The estimate is not
+\emph{wrong}, but the model is more complex than the data can support.
+\end{plainenglish}
+
+Common causes and their fixes:
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.42\textwidth}p{0.54\textwidth}@{}}
+\toprule
+\textbf{Cause} & \textbf{Fix} \\
+\midrule
+There genuinely is no group-level variation & Drop the random effect; report why \\
+Too few groups (fewer than about 5) & Fit the grouping as a fixed effect instead \\
+Random slope not supported by the data & Simplify: \fn{(x|g)} $\to$ \fn{(1|g)} \\
+Correlation between intercept and slope near $\pm 1$ & Use \fn{(x||g)} to force independence \\
+Too many random terms & Remove them one at a time, comparing with LRT \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+<<singular-fix>>=
+m_simple <- lm(y ~ x, data = d)
+round(c(lmer_slope = lme4::fixef(m)["x"], lm_slope = coef(m_simple)["x"]), 4)
+@
+
+With a zero variance component, the mixed model has collapsed to the ordinary
+linear model anyway --- which is why the estimates match exactly.
+
+\section{``Model failed to converge with max|grad| \dots''}
+
+This says the optimiser stopped somewhere the gradient is not quite zero. Sometimes
+it is a real failure; often it is a false alarm from a conservative check.
+
+\subsection{Step 1: scale your predictors}
+
+By far the most common cause, and the easiest fix. Optimisers struggle when
+predictors are on wildly different scales.
+
+<<scaling, warning=TRUE, message=TRUE, size='scriptsize'>>=
+set.seed(6)
+n  <- 600
+dd <- data.frame(
+  g      = factor(rep(1:30, each = 20)),
+  income = rnorm(n, 50000, 15000),        # ~10^4
+  age    = rnorm(n, 40, 12)               # ~10^1
+)
+dd$y <- rbinom(n, 1, plogis(-3 + 0.00002 * dd$income + 0.02 * dd$age +
+                           rep(rnorm(30, 0, 0.5), each = 20)))
+
+## Unscaled: the two predictors differ by four orders of magnitude
+bad <- lme4::glmer(y ~ income + age + (1 | g), family = binomial, data = dd)
+
+## Scaled: same model, well-conditioned
+dd$income_s <- scale(dd$income); dd$age_s <- scale(dd$age)
+good <- lme4::glmer(y ~ income_s + age_s + (1 | g), family = binomial, data = dd)
+round(c(logLik_unscaled = logLik(bad), logLik_scaled = logLik(good)), 4)
+@
+
+The two models are statistically identical, but the scaled version is far easier to
+optimise. Rescale coefficients afterwards by dividing by the standard deviation of
+the original variable.
+
+\begin{rulebox}
+Centre and scale every continuous predictor before fitting a GLMM. It costs one
+line, it never hurts, and it prevents most convergence warnings.
+\end{rulebox}
+
+\subsection{Step 2: try other optimisers}
+
+If several independent optimisers land in the same place, the warning was a false
+alarm.
+
+<<allfit, warning=FALSE, message=FALSE>>=
+af <- lme4::allFit(good, verbose = FALSE)
+ll <- sort(sapply(af[!sapply(af, is, "error")], logLik), decreasing = TRUE)
+round(ll, 5)
+round(diff(range(ll)), 8)          # spread across optimisers
+@
+
+All optimisers agree to
+\Sexpr{signif(diff(range(ll)), 2)} of a log-likelihood unit. That is convergence,
+whatever the warning said.
+
+<<optimizer-control, eval=FALSE>>=
+## Change the optimiser directly
+lme4::glmer(y ~ income_s + age_s + (1 | g), family = binomial, data = dd,
+            control = lme4::glmerControl(optimizer = "bobyqa",
+                                         optCtrl = list(maxfun = 2e5)))
+@
+
+\subsection{Step 3: increase the accuracy of the likelihood}
+
+For binomial GLMMs with a single random effect, \fn{nAGQ} controls how accurately
+the random effects are integrated out. The default (\fn{nAGQ = 1}, the Laplace
+approximation) can be poor with small clusters or rare events.
+
+<<nagq>>=
+data(cbpp, package = "lme4")
+f <- cbind(incidence, size - incidence) ~ period + (1 | herd)
+round(sapply(c(1, 5, 15), function(q)
+  lme4::fixef(lme4::glmer(f, family = binomial, data = cbpp, nAGQ = q))), 4)
+@
+
+The estimates barely move, so the Laplace approximation was fine here. If they
+\emph{do} move noticeably, use the higher \fn{nAGQ} value.
+
+\begin{warningbox}[\fn{nAGQ > 1} has limits]
+It only works with a \emph{single}, scalar random effect. With crossed random
+effects or random slopes you are restricted to \fn{nAGQ = 1}. If accuracy is a
+concern there, switch to \pkg{glmmTMB}, which uses a different and generally more
+accurate approximation, or go Bayesian with \pkg{brms}.
+\end{warningbox}
+
+\subsection{Step 4: simplify the random structure}
+
+The most reliable fix of all. Random effects are expensive: \fn{(1 + x + z | g)}
+estimates six parameters (three variances and three correlations) from however many
+groups you have.
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.34\textwidth}p{0.30\textwidth}p{0.32\textwidth}@{}}
+\toprule
+\textbf{Random structure} & \textbf{Parameters} & \textbf{Groups you need} \\
+\midrule
+\fn{(1 | g)}          & 1  & 5+ (ideally 20+) \\
+\fn{(x || g)}         & 2  & 20+ \\
+\fn{(x | g)}          & 3  & 30+ \\
+\fn{(x + z | g)}      & 6  & 50+ \\
+\fn{(x * z | g)}      & 10 & rarely justified \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{rulebox}[The order to remove things]
+1. Correlations between random terms (\fn{|} $\to$ \fn{||}). \
+2. Random slopes for interactions. \
+3. Random slopes for predictors with little within-group variation. \
+4. Whole random effects with tiny estimated variances. \
+Never remove a random effect that reflects the actual design of your study just
+because it is inconvenient --- if pupils are in schools, that structure is real.
+\end{rulebox}
+
+\section{``fixed-effect model matrix is rank deficient''}
+
+Two of your predictors carry the same information --- perfectly collinear, or a
+factor level that never occurs in the data.
+
+<<rank-deficient, warning=TRUE, message=TRUE>>=
+dz <- data.frame(x = rnorm(50)); dz$x2 <- 2 * dz$x        # exact duplicate
+dz$y  <- rpois(50, exp(1 + 0.4 * dz$x))
+mz <- glm(y ~ x + x2, family = poisson, data = dz)
+coef(mz)
+@
+
+\R{} drops the redundant column and returns \fn{NA}. Find the culprit before
+proceeding:
+
+<<collinearity>>=
+## Which factor combinations never occur?
+data(quine, package = "MASS")
+table(quine$Age, quine$Lrn)
+## Variance inflation factors for continuous predictors
+car::vif(glm(Days ~ Eth + Sex + Age + Lrn, family = poisson, data = quine))
+@
+
+A GVIF (last column, squared and scaled) above about 2--3 is worth investigating;
+above 5 usually means two predictors are measuring the same thing.
+
+Notice also that \fn{Age = F3} never occurs with \fn{Lrn = SL}. Any model with an
+\fn{Age:Lrn} interaction would be rank deficient for exactly that reason.
+
+\section{glmmTMB warnings}
+
+\pkg{glmmTMB} reports problems differently.
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.46\textwidth}p{0.50\textwidth}@{}}
+\toprule
+\textbf{Message} & \textbf{Meaning and fix} \\
+\midrule
+\fn{NA/NaN function evaluation} & Usually harmless --- the optimiser probed an
+  illegal region and backed out. Check the fit converged. \\
+\fn{Model convergence problem; non-positive-definite Hessian} & Serious. A
+  parameter is unidentified. Simplify the model. \\
+\fn{Std. Errors are NaN} & Same cause: the model is over-parameterised. \\
+Variance estimate at zero & Same as a singular fit in \pkg{lme4}. Drop that term. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+<<glmmtmb-diag>>=
+library(glmmTMB)
+data(grouseticks, package = "lme4")
+grouseticks$cH <- scale(grouseticks$HEIGHT)
+gt <- glmmTMB(TICKS ~ cH + YEAR + (1 | BROOD), family = nbinom2, data = grouseticks)
+gt$fit$convergence            # 0 means the optimiser converged
+gt$sdr$pdHess                 # TRUE means the Hessian is well behaved
+@
+
+\section{A triage flowchart}
+
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\footnotesize, node distance=5mm,
+  b/.style={rectangle, rounded corners=2pt, draw=rule1, fill=white, align=left,
+            inner sep=5pt, text width=104mm},
+  ar/.style={-{Stealth[length=4pt]}, draw=rule1, thick}]
+\node[b, fill=primarylt, draw=primary] (n1)
+  {\textbf{1.} Centre and scale every continuous predictor. Re-fit.};
+\node[b, below=of n1] (n2)
+  {\textbf{2.} Check for singular fit: \fn{isSingular(m)}. If TRUE, simplify the
+   random structure.};
+\node[b, below=of n2] (n3)
+  {\textbf{3.} Run \fn{allFit()}. If all optimisers agree, the warning was a false
+   alarm --- proceed.};
+\node[b, below=of n3] (n4)
+  {\textbf{4.} Try \fn{bobyqa} or \fn{Nelder\_Mead} with a higher \fn{maxfun}.};
+\node[b, below=of n4] (n5)
+  {\textbf{5.} Simplify: correlations first, then random slopes, then whole terms.};
+\node[b, below=of n5] (n6)
+  {\textbf{6.} Switch package: \fn{glmmTMB} often fits what \fn{glmer} cannot.};
+\node[b, below=of n6, fill=greenlt, draw=greenbox] (n7)
+  {\textbf{7.} Still failing? Go Bayesian (\pkg{brms}, \pkg{rstanarm}) --- weak
+   priors regularise the variance components and the model will fit.};
+\foreach \a/\b in {n1/n2, n2/n3, n3/n4, n4/n5, n5/n6, n6/n7} \draw[ar] (\a) -- (\b);
+\end{tikzpicture}
+\end{center}
+
+\section{Warnings you can safely ignore}
+
+\begin{itemize}
+  \item \fn{non-integer \#successes in a binomial glm!} --- expected when you use
+        \fn{weights} with proportions.
+  \item \fn{non-integer x = \dots} from a quasi-Poisson on continuous data ---
+        expected, and harmless, because quasi-likelihood does not require integers.
+  \item \fn{max|grad| = 0.0015} where \fn{allFit} shows all optimisers agreeing to
+        many decimal places.
+  \item \fn{fitted probabilities numerically 0 or 1} \emph{if} you have checked
+        there is no separation and the coefficients are sensible.
+\end{itemize}
+
+\begin{warningbox}[Warnings you must never ignore]
+Coefficients in the hundreds. Standard errors of \fn{NaN} or in the thousands. A
+non-positive-definite Hessian. A variance component of exactly zero that your
+design says should not be zero. Each of these means a number in your output is not
+what it claims to be.
+\end{warningbox}

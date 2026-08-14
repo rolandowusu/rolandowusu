@@ -1,0 +1,298 @@
+\chapter{Mixed models I: why and how}
+
+\section{The problem: not all observations are independent}
+
+Every model so far has assumed each row of your data is a fresh, independent piece
+of information. Very often it is not:
+
+\begin{itemize}
+  \item the same patient measured at five visits;
+  \item 30 pupils in each of 40 schools;
+  \item repeated litters from the same mother;
+  \item several plots inside each farm, several farms inside each district.
+\end{itemize}
+
+Two pupils from the same school are more alike than two pupils picked at random.
+So your 1200 pupils do not carry 1200 pupils' worth of information about schools.
+Treating them as if they do makes your standard errors far too small.
+
+\begin{plainenglish}[Effective sample size]
+If observations within a cluster are correlated, your real sample size is
+somewhere between the number of clusters and the number of observations. In the
+worst case --- perfectly correlated observations --- 30 measurements on one person
+tell you exactly as much as one measurement.
+\end{plainenglish}
+
+\section{How bad is it? A simulation}
+
+<<cluster-damage>>=
+set.seed(77)
+sim_cluster <- function(n_group = 20, n_per = 10, sd_group = 1.2) {
+  g   <- rep(1:n_group, each = n_per)
+  x   <- rep(rnorm(n_group), each = n_per)      # a GROUP-level predictor
+  b_g <- rep(rnorm(n_group, 0, sd_group), each = n_per)   # group random effect
+  y   <- 0 + 0 * x + b_g + rnorm(n_group * n_per, 0, 1)   # TRUE effect of x is 0
+  d   <- data.frame(y, x, g = factor(g))
+  p_lm  <- summary(lm(y ~ x, data = d))$coefficients["x", 4]
+  p_lmm <- {
+    m <- lme4::lmer(y ~ x + (1 | g), data = d)
+    2 * pnorm(abs(summary(m)$coefficients["x", "t value"]), lower.tail = FALSE)
+  }
+  c(ignoring_clusters = p_lm, mixed_model = p_lmm)
+}
+ps <- t(replicate(400, sim_cluster()))
+round(colMeans(ps < 0.05), 3)          # how often each finds a "significant" effect
+@
+
+The true effect of \fn{x} is exactly zero. Ignoring the clustering, we declare
+significance \Sexpr{round(100*mean(ps[, 1] < 0.05))}\% of the time instead of 5\%.
+The mixed model stays near the advertised rate.
+
+\begin{warningbox}
+Clustering hurts most for predictors that vary \emph{between} clusters (treatment
+assigned per school, exposure assigned per farm). For predictors that vary
+\emph{within} a cluster the damage is usually smaller --- but it is never zero.
+\end{warningbox}
+
+\section{Fixed effects versus random effects}
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.20\textwidth}p{0.38\textwidth}p{0.38\textwidth}@{}}
+\toprule
+ & \textbf{Fixed effect} & \textbf{Random effect} \\
+\midrule
+The levels are & the specific ones you care about & a sample from a larger population \\
+You estimate & one coefficient per level & one \emph{variance} \\
+Cost in df & $k-1$ parameters & 1 parameter \\
+Can predict new levels & no & yes \\
+Handles unbalanced data & poorly & well \\
+Typical examples & treatment, sex, dose & subject, school, batch, litter, plot \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{keyidea}[The practical test]
+Ask: ``if I repeated this study, would I get the same levels of this variable?''
+Same treatments, same sexes --- fixed. A different set of schools, patients or
+batches --- random.
+\end{keyidea}
+
+\section{The random-intercept model}
+
+\[
+y_{ij} = \underbrace{\beta_0 + \beta_1 x_{ij}}_{\text{fixed part}}
+       + \underbrace{u_j}_{\text{random intercept}} + \varepsilon_{ij},
+\qquad u_j \sim N(0, \sigma_u^2), \quad \varepsilon_{ij} \sim N(0, \sigma^2).
+\]
+
+Each group $j$ gets its own intercept $\beta_0 + u_j$, and those intercepts are
+assumed to be drawn from a normal distribution whose variance we estimate.
+
+<<sleep-fit>>=
+library(lme4)
+data(sleepstudy)
+str(sleepstudy)
+m_ri <- lmer(Reaction ~ Days + (1 | Subject), data = sleepstudy)
+summary(m_ri)
+@
+
+\subsection{Reading the random effects table}
+
+<<varcorr>>=
+VarCorr(m_ri)
+as.data.frame(VarCorr(m_ri))
+@
+
+\begin{plainenglish}
+The \fn{Subject} variance is the spread of the subject-specific intercepts: how much
+people differ from each other on average. The \fn{Residual} variance is the spread
+of measurements within a person. Together they partition the total variability
+into ``between people'' and ``within people''.
+\end{plainenglish}
+
+\subsection{The intraclass correlation}
+
+\[
+\text{ICC} = \frac{\sigma_u^2}{\sigma_u^2 + \sigma^2}
+\]
+--- the proportion of total variance that is between groups, and equivalently the
+correlation between two observations from the same group.
+
+<<icc>>=
+vc <- as.data.frame(VarCorr(m_ri))
+icc <- vc$vcov[1] / sum(vc$vcov)
+round(c(between_subject_var = vc$vcov[1], within_subject_var = vc$vcov[2],
+        ICC = icc), 3)
+@
+
+An ICC of \Sexpr{round(icc, 2)} means about
+\Sexpr{round(100*icc)}\% of the variation in reaction time is between people rather
+than within them. Any ICC noticeably above 0 means clustering must be modelled.
+
+\section{Random slopes}
+
+A random intercept says everyone starts at a different level. A random slope says
+everyone \emph{responds} differently too.
+
+\[
+y_{ij} = \beta_0 + \beta_1 x_{ij} + u_{0j} + u_{1j}x_{ij} + \varepsilon_{ij}
+\]
+
+<<sleep-rs>>=
+m_rs <- lmer(Reaction ~ Days + (Days | Subject), data = sleepstudy)
+summary(m_rs)$varcor
+anova(m_ri, m_rs)
+@
+
+The likelihood-ratio test strongly favours the random-slope model: subjects really
+do differ in how badly sleep deprivation affects them.
+
+<<slopes-plot, fig.width=9.4, fig.height=4.4, out.width="\\textwidth", fig.cap="Left: each subject's own trajectory with the population average in bold. Right: subject-specific intercepts and slopes from the mixed model. The spread of the points is exactly what the random-effects variances measure.">>=
+par(mfrow = c(1, 2)); par_book()
+plot(sleepstudy$Days, sleepstudy$Reaction, type = "n",
+     xlab = "days of sleep deprivation", ylab = "reaction time (ms)",
+     main = "Every subject has their own line")
+grid_book()
+for (s in unique(sleepstudy$Subject)) {
+  d <- subset(sleepstudy, Subject == s)
+  cf <- coef(m_rs)$Subject[as.character(s), ]
+  abline(cf[[1]], cf[[2]], col = adjustcolor(PAL["grey"], 0.75), lwd = 1.2)
+  points(d$Days, d$Reaction, pch = 21, bg = adjustcolor(PAL["primary"], 0.20),
+         col = "white", cex = 0.8)
+}
+abline(fixef(m_rs)[1], fixef(m_rs)[2], lwd = 4, col = PAL["accent"])
+legend("topleft", bty = "n", cex = 0.8, lwd = c(4, 1.2),
+       col = c(PAL["accent"], PAL["grey"]),
+       legend = c("population average", "individual subjects"))
+
+re <- ranef(m_rs)$Subject
+plot(re[, 1], re[, 2], pch = 21, bg = adjustcolor(PAL["accent"], 0.6), col = "white",
+     cex = 1.6, xlab = "random intercept (deviation, ms)",
+     ylab = "random slope (deviation, ms/day)",
+     main = "Subject-level deviations")
+grid_book(); abline(h = 0, v = 0, lty = 3, col = PAL["grey"])
+text(re[, 1], re[, 2], rownames(re), pos = 3, cex = 0.55, col = PAL["grey"])
+@
+
+\section{Shrinkage: the best feature of mixed models}
+
+Fit a separate regression to each subject and you get 18 completely independent
+estimates, each noisy. The mixed model instead pulls each subject's estimate
+towards the overall average --- by a lot if that subject has little data or is
+extreme, hardly at all if the subject has plenty of consistent data.
+
+<<shrinkage, fig.width=7.2, fig.height=4.4, out.width="0.82\\textwidth", fig.cap="Arrows run from each subject's own separate regression fit to the mixed model's estimate. Estimates furthest from the centre are pulled in the most: this is shrinkage, and it is what makes mixed-model estimates more accurate on average.">>=
+par_book()
+indiv <- t(sapply(split(sleepstudy, sleepstudy$Subject),
+                  function(d) coef(lm(Reaction ~ Days, data = d))))
+mixed <- as.matrix(coef(m_rs)$Subject)
+plot(rbind(indiv, mixed), type = "n", xlab = "intercept", ylab = "slope (ms/day)",
+     main = "Shrinkage towards the population mean")
+grid_book()
+arrows(indiv[, 1], indiv[, 2], mixed[, 1], mixed[, 2], length = 0.06,
+       col = adjustcolor(PAL["grey"], 0.9), lwd = 1.5)
+points(indiv[, 1], indiv[, 2], pch = 21, bg = adjustcolor(PAL["red"], 0.5),
+       col = "white", cex = 1.4)
+points(mixed[, 1], mixed[, 2], pch = 21, bg = adjustcolor(PAL["green"], 0.7),
+       col = "white", cex = 1.4)
+points(fixef(m_rs)[1], fixef(m_rs)[2], pch = 4, cex = 2.4, lwd = 3, col = PAL["primary"])
+legend("topright", bty = "n", cex = 0.75, pch = c(21, 21, 4),
+       pt.bg = c(adjustcolor(PAL["red"], 0.5), adjustcolor(PAL["green"], 0.7), NA),
+       col = c("white", "white", PAL["primary"]),
+       legend = c("separate lm per subject", "mixed model (shrunk)", "population average"))
+@
+
+\begin{keyidea}
+Shrinkage is not a bug or a fudge. It is the mathematically optimal way to combine
+what one subject tells you with what all the other subjects tell you. It is why a
+mixed model beats fitting each group separately, especially when groups are small
+or unbalanced.
+\end{keyidea}
+
+\section{Specifying random effects in \R}
+
+The formula syntax is compact and worth learning properly.
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.30\textwidth}p{0.66\textwidth}@{}}
+\toprule
+\textbf{Syntax} & \textbf{Meaning} \\
+\midrule
+\fn{(1 | g)}            & random intercept per level of \fn{g} \\
+\fn{(x | g)}            & random intercept and random slope for \fn{x}, correlated \\
+\fn{(0 + x | g)}        & random slope only, no random intercept \\
+\fn{(1 | g) + (0 + x | g)} & random intercept and slope, forced uncorrelated \\
+\fn{(x || g)}           & shorthand for the line above \\
+\fn{(1 | g1/g2)}        & \fn{g2} nested inside \fn{g1}; same as \fn{(1|g1) + (1|g1:g2)} \\
+\fn{(1 | g1) + (1 | g2)} & crossed random effects \\
+\fn{(1 | obs)}          & observation-level random effect (Chapter 15) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{warningbox}[Nested versus crossed depends on your labels]
+If classroom is labelled 1, 2, 3 \emph{within every school}, then class ``1'' in
+school A and class ``1'' in school B are different classes and you must write
+\fn{(1|school/class)}. If every class has a globally unique ID, \fn{(1|school) +
+(1|class)} gives the same fit. Getting this wrong silently pools unrelated groups
+together.
+\end{warningbox}
+
+\section{REML or ML?}
+
+\fn{lmer} uses REML (restricted maximum likelihood) by default. REML gives less
+biased variance estimates; ML gives comparable likelihoods for models with
+different fixed effects.
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.42\textwidth}p{0.24\textwidth}p{0.30\textwidth}@{}}
+\toprule
+\textbf{You want to\dots} & \textbf{Use} & \textbf{\R} \\
+\midrule
+compare models differing in \emph{fixed} effects & ML & \fn{REML = FALSE} \\
+compare models differing in \emph{random} effects & REML (or ML) & default \\
+report final variance estimates & REML & default \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+<<reml-ml>>=
+a <- lmer(Reaction ~ Days + (Days | Subject), data = sleepstudy, REML = FALSE)
+b <- lmer(Reaction ~ 1    + (Days | Subject), data = sleepstudy, REML = FALSE)
+anova(b, a)                # comparing fixed effects: both fitted with ML
+@
+
+Helpfully, \fn{anova()} on \fn{merMod} objects automatically refits with ML when
+you compare models, so this trap is largely handled for you.
+
+\section{Where are the $p$-values?}
+
+\fn{lmer} deliberately prints $t$ values without $p$-values, because the correct
+denominator degrees of freedom for an unbalanced mixed model are genuinely not
+known. Your options:
+
+<<pvalues>>=
+## 1. Likelihood-ratio test (recommended; refit with ML)
+anova(b, a)$`Pr(>Chisq)`[2]
+
+## 2. Wald with a normal approximation -- fine when you have many clusters
+tv <- summary(m_rs)$coefficients["Days", "t value"]
+c(t = tv, p_normal_approx = 2 * pnorm(abs(tv), lower.tail = FALSE))
+
+## 3. Profile-likelihood confidence intervals -- often the most informative
+confint(m_rs, method = "profile", oldNames = FALSE)
+@
+
+A fourth option is \fn{lmerTest::lmer}, which adds Satterthwaite or
+Kenward--Roger degrees of freedom and prints $p$-values in the usual place. With
+few clusters (under about 30) Kenward--Roger is the safest choice.
+
+\begin{rulebox}
+Many clusters (40+): the normal approximation is fine. \\
+Few clusters (under 30): use Kenward--Roger, or bootstrap
+(\fn{confint(m, method = "boot")}). \\
+Comparing nested models: use the likelihood-ratio test, refitted with ML.
+\end{rulebox}

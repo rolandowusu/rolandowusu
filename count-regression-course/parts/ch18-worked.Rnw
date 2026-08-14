@@ -1,0 +1,344 @@
+\chapter{A complete worked analysis}
+
+This chapter runs the whole workflow end to end on one dataset. It is simulated,
+deliberately: because we know the true answer, you can see at each step whether the
+method is recovering it or being fooled.
+
+\section{The scenario}
+
+A health programme is evaluated across 40 clinics. Each clinic enrols patients, and
+for each patient we record the number of malaria episodes in a follow-up period.
+Key features, all of which are typical of real data:
+
+\begin{itemize}
+  \item follow-up time differs between patients $\Rightarrow$ we need an
+        \textbf{offset};
+  \item patients are nested in clinics $\Rightarrow$ we need a \textbf{random
+        effect};
+  \item patients differ beyond what we measured $\Rightarrow$
+        \textbf{overdispersion};
+  \item the treatment is assigned \textbf{at clinic level}, which is where
+        ignoring clustering does the most damage.
+\end{itemize}
+
+<<sim-data>>=
+set.seed(2025)
+n_clinic  <- 40
+n_per     <- 40
+clinic    <- rep(1:n_clinic, each = n_per)
+treated   <- rep(rbinom(n_clinic, 1, 0.5), each = n_per)   # assigned per CLINIC
+clinic_re <- rep(rnorm(n_clinic, 0, 0.45), each = n_per)   # clinic variation
+age       <- round(runif(n_clinic * n_per, 1, 60))
+bednet    <- rbinom(n_clinic * n_per, 1, 0.4)
+fu_years  <- round(runif(n_clinic * n_per, 0.25, 2.0), 2)  # unequal follow-up
+
+## TRUE model: log rate = 0.2 - 0.45*treated - 0.012*age - 0.35*bednet + clinic RE
+log_rate  <- 0.2 - 0.45 * treated - 0.012 * age - 0.35 * bednet + clinic_re
+mu        <- exp(log_rate + log(fu_years))
+episodes  <- rnbinom(length(mu), mu = mu, size = 2.5)      # overdispersed
+
+mal <- data.frame(
+  episodes, fu_years, clinic = factor(clinic),
+  treated = factor(treated, 0:1, c("control", "programme")),
+  age, bednet = factor(bednet, 0:1, c("no", "yes"))
+)
+str(mal)
+@
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Quantity} & \textbf{True value} \\
+\midrule
+Programme rate ratio & $e^{-0.45} = \Sexpr{round(exp(-0.45), 3)}$ \\
+Bednet rate ratio    & $e^{-0.35} = \Sexpr{round(exp(-0.35), 3)}$ \\
+Rate ratio per year of age & $e^{-0.012} = \Sexpr{round(exp(-0.012), 4)}$ \\
+Clinic SD (log scale) & $0.45$ \\
+Dispersion $\theta$   & $2.5$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Step 1: look at the data}
+
+<<eda, fig.width=9.4, fig.height=6.2, out.width="\\textwidth", fig.cap="Exploratory plots. Note the long right tail, the very different follow-up times, and the visible spread between clinic-level rates -- each of which points at a specific modelling decision.">>=
+par(mfrow = c(2, 2)); par_book()
+barplot(table(factor(mal$episodes, levels = 0:max(mal$episodes))),
+        col = adjustcolor(PAL["primary"], 0.7), border = "white",
+        xlab = "malaria episodes", ylab = "patients", main = "Outcome distribution")
+
+hist(mal$fu_years, breaks = 20, col = adjustcolor(PAL["accent"], 0.7),
+     border = "white", xlab = "follow-up (years)", main = "Exposure varies 8-fold")
+
+rate_by_clinic <- tapply(mal$episodes, mal$clinic, sum) /
+                  tapply(mal$fu_years, mal$clinic, sum)
+trt_by_clinic  <- tapply(as.integer(mal$treated), mal$clinic, mean)
+stripchart(rate_by_clinic ~ ifelse(trt_by_clinic > 1.5, "programme", "control"),
+           vertical = TRUE, method = "jitter", pch = 21,
+           bg = adjustcolor(PAL["green"], 0.6), col = "white", cex = 1.3,
+           ylab = "clinic episode rate per year", main = "Clinic-level rates")
+grid_book()
+
+plot(mal$age, mal$episodes / mal$fu_years, pch = 21,
+     bg = adjustcolor(PAL["grey"], 0.35), col = "white", cex = 0.8,
+     xlab = "age (years)", ylab = "crude rate per year", main = "Rate against age")
+grid_book()
+lines(lowess(mal$age, mal$episodes / mal$fu_years), lwd = 3, col = PAL["red"])
+@
+
+<<eda-numbers>>=
+c(n_patients = nrow(mal), n_clinics = nlevels(mal$clinic),
+  mean_episodes = round(mean(mal$episodes), 2),
+  var_episodes = round(var(mal$episodes), 2),
+  percent_zero = round(100 * mean(mal$episodes == 0), 1))
+@
+
+Variance is already about
+\Sexpr{round(var(mal$episodes)/mean(mal$episodes), 1)} times the mean in the raw
+data. That is a hint, not proof --- some of that spread will be explained by the
+predictors, and the rest is what the dispersion check in Step 4 has to judge.
+
+\section{Step 2: the naive model (what not to do)}
+
+<<naive-model>>=
+m0 <- glm(episodes ~ treated + age + bednet, family = poisson, data = mal)
+round(exp(cbind(IRR = coef(m0), confint.default(m0))), 4)
+@
+
+Two errors are already baked in: no offset, so patients followed longer look sicker;
+and no clustering, so the intervals are far too narrow. The programme rate ratio is
+\Sexpr{round(exp(coef(m0))["treatedprogramme"], 3)} against a truth of
+\Sexpr{round(exp(-0.45), 3)}.
+
+\section{Step 3: add the offset}
+
+<<offset-model>>=
+m1 <- glm(episodes ~ treated + age + bednet + offset(log(fu_years)),
+          family = poisson, data = mal)
+round(exp(cbind(IRR = coef(m1), confint.default(m1))), 4)
+@
+
+Much better --- the programme estimate is now
+\Sexpr{round(exp(coef(m1))["treatedprogramme"], 3)}, close to the true
+\Sexpr{round(exp(-0.45), 3)}.
+
+\section{Step 4: check dispersion}
+
+<<disp-check>>=
+disp <- function(m) {
+  X2 <- sum(residuals(m, type = "pearson")^2); df <- df.residual(m)
+  c(dispersion = X2 / df, p = pchisq(X2, df, lower.tail = FALSE))
+}
+round(disp(m1), 4)
+AER::dispersiontest(m1, trafo = 2)
+@
+
+Dispersion is \Sexpr{round(disp(m1)["dispersion"], 2)}, decisively above 1. The
+standard errors from \fn{m1} are too small by roughly
+$\sqrt{\Sexpr{round(disp(m1)["dispersion"], 2)}} =
+\Sexpr{round(sqrt(disp(m1)["dispersion"]), 2)}$.
+
+Before blaming the distribution, check the mean model (Chapter 7's advice):
+
+<<check-shape, fig.width=7, fig.height=3.8, out.width="0.8\\textwidth", fig.cap="Quantile residuals against age. Flat, so a linear term for age is adequate and the overdispersion is not caused by a missing curve.">>=
+set.seed(3)
+qres <- function(y, pfun, ...) {
+  a <- pfun(y - 1, ...); b <- pfun(y, ...)
+  qnorm(pmin(pmax(runif(length(y), pmin(a,b), pmax(a,b)), 1e-10), 1 - 1e-10))
+}
+par_book()
+qr1 <- qres(mal$episodes, ppois, lambda = fitted(m1))
+plot(mal$age, qr1, pch = 21, bg = adjustcolor(PAL["primary"], 0.3), col = "white",
+     cex = 0.9, xlab = "age", ylab = "quantile residual",
+     main = "Is the effect of age linear on the log scale?")
+grid_book(); abline(h = 0, col = PAL["grey"], lwd = 1.5)
+lines(lowess(mal$age, qr1), lwd = 3, col = PAL["red"])
+@
+
+<<check-nonlinear>>=
+m1_spline <- glm(episodes ~ treated + splines::ns(age, 4) + bednet +
+                 offset(log(fu_years)), family = poisson, data = mal)
+anova(m1, m1_spline, test = "LRT")
+@
+
+No evidence of curvature. The overdispersion is real, not a misspecified mean.
+
+\section{Step 5: negative binomial}
+
+<<nb-step>>=
+m2 <- MASS::glm.nb(episodes ~ treated + age + bednet + offset(log(fu_years)),
+                   data = mal)
+c(theta = round(m2$theta, 3), true_theta = 2.5)
+round(c(AIC_poisson = AIC(m1), AIC_negbin = AIC(m2)), 1)
+pscl::odTest(m2)
+@
+
+$\hat\theta = \Sexpr{round(m2$theta, 2)}$, noticeably \emph{smaller} than the true
+value of 2.5 --- and a smaller $\theta$ means more dispersion. That is not a
+mistake, it is a symptom. This model has only one place to put extra variability,
+so it is absorbing the patient-level heterogeneity we built in \emph{and} the
+clinic-level variation it has no way to represent. Step 6 separates the two, and
+$\hat\theta$ moves back towards its true value once it does.
+
+\section{Step 6: add the random effect}
+
+<<glmm-step>>=
+library(glmmTMB)
+m3 <- glmmTMB(episodes ~ treated + age + bednet + offset(log(fu_years)) +
+              (1 | clinic), family = nbinom2, data = mal)
+summary(m3)
+@
+
+<<glmm-varcomp>>=
+sd_clinic <- sqrt(as.numeric(VarCorr(m3)$cond$clinic))
+c(estimated_clinic_sd = round(sd_clinic, 3), true_clinic_sd = 0.45,
+  estimated_theta = round(sigma(m3), 3), true_theta = 2.5)
+@
+
+Both the clinic standard deviation and $\theta$ are now close to their true values.
+Splitting the variation into ``between clinics'' and ``between patients'' has let
+each parameter find its own level.
+
+\section{Step 7: compare everything}
+
+<<compare-all>>=
+truth <- c(treatedprogramme = -0.45, age = -0.012, bednetyes = -0.35)
+get <- function(m, nm) {
+  cf <- if (inherits(m, "glmmTMB")) fixef(m)$cond else coef(m)
+  se <- if (inherits(m, "glmmTMB")) sqrt(diag(vcov(m)$cond))
+        else sqrt(diag(vcov(m)))
+  c(est = cf[nm], se = se[nm])
+}
+tab <- t(sapply(list(
+  "1. Poisson, no offset"     = m0,
+  "2. Poisson + offset"       = m1,
+  "3. Negative binomial"      = m2,
+  "4. NB + clinic random eff" = m3
+), get, nm = "treatedprogramme"))
+out <- data.frame(
+  IRR       = round(exp(tab[, 1]), 3),
+  lower     = round(exp(tab[, 1] - 1.96 * tab[, 2]), 3),
+  upper     = round(exp(tab[, 1] + 1.96 * tab[, 2]), 3),
+  CI_width  = round(exp(tab[, 1] + 1.96*tab[, 2]) - exp(tab[, 1] - 1.96*tab[, 2]), 3)
+)
+out$covers_truth <- out$lower <= exp(-0.45) & out$upper >= exp(-0.45)
+out
+@
+
+<<compare-plot, fig.width=7.6, fig.height=4, out.width="0.85\\textwidth", fig.cap="The programme effect under four models. The truth is the dashed line. Each fix widens the interval; only the last model both centres on the truth and reports honest uncertainty.">>=
+par_book()
+k <- nrow(out)
+plot(out$IRR, k:1, xlim = range(c(out$lower, out$upper, exp(-0.45))) * c(0.95, 1.05),
+     ylim = c(0.5, k + 0.5), pch = 19, cex = 1.6, col = PAL["primary"], yaxt = "n",
+     xlab = "rate ratio for the programme", ylab = "",
+     main = "Each correction widens the interval")
+axis(2, at = k:1, labels = rownames(out), las = 1, cex.axis = 0.65)
+grid_book()
+arrows(out$lower, k:1, out$upper, k:1, code = 3, angle = 90, length = 0.05,
+       lwd = 2.5, col = PAL["primary"])
+abline(v = exp(-0.45), lwd = 2.5, lty = 2, col = PAL["red"])
+abline(v = 1, lwd = 1.5, lty = 3, col = PAL["grey"])
+text(exp(-0.45), k + 0.42, "truth", col = PAL["red"], cex = 0.75, pos = 4)
+@
+
+\begin{keyidea}[What the table shows]
+Model 1 is wrong and confident. Model 2 fixes the point estimate but is still
+overconfident. Model 3 widens the interval by accounting for patient heterogeneity.
+Model 4 widens it again by accounting for clinic heterogeneity --- and its interval
+is roughly
+\Sexpr{round(out$CI_width[4] / out$CI_width[2], 1)} times as wide as model 2's.
+That extra width is not a loss. It is the honest amount of uncertainty in a study
+where treatment was assigned to 40 clinics, not to 1000 patients.
+\end{keyidea}
+
+\section{Step 8: check the final model}
+
+<<final-check, fig.width=9.4, fig.height=4, out.width="\\textwidth", fig.cap="Diagnostics for the final model: quantile residuals lie on the normal line, and simulated datasets reproduce both the number of zeros and the largest observed count.">>=
+set.seed(8)
+mu_hat <- fitted(m3)
+qr3 <- qres(mal$episodes, pnbinom, mu = mu_hat, size = sigma(m3))
+par(mfrow = c(1, 2)); par_book()
+qqnorm(qr3, pch = 21, bg = adjustcolor(PAL["green"], 0.4), col = "white", cex = 0.9,
+       main = "Quantile residuals: final model")
+qqline(qr3, lwd = 2.5, col = PAL["primary"]); grid_book()
+
+sims <- simulate(m3, nsim = 300)
+p0 <- sapply(sims, function(z) mean(z == 0))
+hist(p0, breaks = 25, col = adjustcolor(PAL["primary"], 0.55), border = "white",
+     xlab = "proportion of zeros", main = "Simulated vs observed zeros")
+abline(v = mean(mal$episodes == 0), lwd = 3, col = PAL["red"])
+@
+
+<<final-check-numbers>>=
+round(c(sd_qres = sd(qr3),
+        observed_zeros = mean(mal$episodes == 0),
+        simulated_zeros_mean = mean(p0),
+        simulated_p = mean(p0 >= mean(mal$episodes == 0))), 4)
+@
+
+Quantile residuals have standard deviation \Sexpr{round(sd(qr3), 2)}, sit on the
+normal line, and the model reproduces the zeros. The model fits.
+
+\section{Step 9: report it}
+
+<<final-report>>=
+ci <- confint(m3, parm = "beta_")
+report <- data.frame(
+  IRR   = round(exp(ci[, "Estimate"]), 3),
+  lower = round(exp(ci[, 1]), 3),
+  upper = round(exp(ci[, 2]), 3)
+)
+rownames(report) <- rownames(ci)
+report
+@
+
+\begin{plainenglish}[The paragraph you would write]
+``We modelled the number of malaria episodes per patient with a negative binomial
+mixed model, using $\log(\text{follow-up years})$ as an offset and a random
+intercept for clinic. Patients in programme clinics had an incidence rate ratio of
+\Sexpr{round(exp(ci["treatedprogramme", "Estimate"]), 2)}
+(95\% CI \Sexpr{round(exp(ci["treatedprogramme", 1]), 2)}--\Sexpr{round(exp(ci["treatedprogramme", 2]), 2)})
+compared with control clinics, adjusting for age and bednet use. Bednet use was
+associated with an IRR of
+\Sexpr{round(exp(ci["bednetyes", "Estimate"]), 2)}
+(95\% CI \Sexpr{round(exp(ci["bednetyes", 1]), 2)}--\Sexpr{round(exp(ci["bednetyes", 2]), 2)}).
+Counts were strongly overdispersed under a Poisson model (Pearson dispersion
+\Sexpr{round(disp(m1)["dispersion"], 1)}); the fitted dispersion parameter was
+$\hat\theta = \Sexpr{round(sigma(m3), 2)}$ and the between-clinic standard
+deviation was \Sexpr{round(sd_clinic, 2)} on the log scale.''
+\end{plainenglish}
+
+\section{The workflow as a checklist}
+
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\footnotesize, node distance=4mm,
+  b/.style={rectangle, rounded corners=2pt, draw=rule1, fill=white, align=left,
+            inner sep=5pt, text width=112mm},
+  ar/.style={-{Stealth[length=4pt]}, draw=rule1, thick}]
+\node[b, fill=primarylt, draw=primary] (a)
+  {\textbf{1. Look at the data.} Distribution of the outcome, proportion of zeros,
+   variance vs mean, exposure, cluster sizes.};
+\node[b, below=of a] (b)
+  {\textbf{2. Identify the structure.} Is there exposure (offset)? Are rows
+   clustered? Are predictors at the individual or the group level?};
+\node[b, below=of b] (c)
+  {\textbf{3. Fit the Poisson with the offset.} This is the reference point.};
+\node[b, below=of c] (d)
+  {\textbf{4. Check the mean model.} Quantile residuals against every predictor;
+   test for curvature before blaming the distribution.};
+\node[b, below=of d] (e)
+  {\textbf{5. Measure dispersion.} Pearson $X^2$/df, \fn{dispersiontest}, predicted
+   vs observed zeros.};
+\node[b, below=of e] (f)
+  {\textbf{6. Fix what is broken.} Negative binomial for overdispersion; random
+   effects for clustering; zero-inflation only if zeros are still short.};
+\node[b, below=of f] (g)
+  {\textbf{7. Check the final model.} Quantile residual Q--Q, rootogram,
+   simulation-based checks, influence.};
+\node[b, below=of g, fill=greenlt, draw=greenbox] (h)
+  {\textbf{8. Report on the response scale.} Rate ratios with confidence intervals,
+   what you checked, what you found, what you did about it.};
+\foreach \x/\y in {a/b, b/c, c/d, d/e, e/f, f/g, g/h} \draw[ar] (\x) -- (\y);
+\end{tikzpicture}
+\end{center}

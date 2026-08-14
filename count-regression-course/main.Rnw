@@ -1,0 +1,276 @@
+\documentclass[11pt,a4paper,oneside]{report}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Packages
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=2.4cm,top=2.6cm,bottom=2.6cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage[table]{xcolor}
+\usepackage{caption}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage[most]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc,fit,backgrounds}
+\usepackage[hidelinks,bookmarks=true,bookmarksnumbered=true]{hyperref}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Colours
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\definecolor{ink}{RGB}{28,38,48}
+\definecolor{primary}{RGB}{17,74,102}
+\definecolor{primarylt}{RGB}{232,241,245}
+\definecolor{accent}{RGB}{192,86,33}
+\definecolor{greenbox}{RGB}{31,110,74}
+\definecolor{greenlt}{RGB}{233,244,238}
+\definecolor{redbox}{RGB}{157,45,45}
+\definecolor{redlt}{RGB}{250,236,235}
+\definecolor{amber}{RGB}{150,102,10}
+\definecolor{amberlt}{RGB}{252,246,231}
+\definecolor{codebg}{RGB}{246,247,249}
+\definecolor{rule1}{RGB}{200,209,216}
+
+\color{ink}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Headings
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\titleformat{\chapter}[display]
+  {\normalfont\sffamily\bfseries\color{primary}}
+  {\raggedright\normalsize\sffamily\bfseries\color{accent}\MakeUppercase{\chaptertitlename}\ \thechapter}
+  {6pt}
+  {\Huge\raggedright}
+  [\vspace{4pt}{\color{rule1}\titlerule[1pt]}]
+\titlespacing*{\chapter}{0pt}{-16pt}{26pt}
+
+\titleformat{\section}
+  {\normalfont\sffamily\large\bfseries\color{primary}}{\thesection}{0.7em}{}
+\titleformat{\subsection}
+  {\normalfont\sffamily\normalsize\bfseries\color{ink}}{\thesubsection}{0.7em}{}
+
+\setcounter{secnumdepth}{2}
+\setcounter{tocdepth}{1}
+
+\setlength{\headheight}{22pt}
+\addtolength{\topmargin}{-8pt}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{rule1}\leaders\hrule height \headrulewidth\hfill}}
+\fancyhead[L]{\sffamily\footnotesize\color{primary}\nouppercase{\leftmark}}
+\fancyhead[R]{\sffamily\footnotesize\color{primary}\thepage}
+\fancypagestyle{plain}{\fancyhf{}\renewcommand{\headrulewidth}{0pt}\fancyfoot[C]{\sffamily\footnotesize\color{primary}\thepage}}
+\renewcommand{\chaptermark}[1]{\markboth{Chapter \thechapter. #1}{}}
+
+\captionsetup{font=small,labelfont={sf,bf,color=primary},textfont=sf}
+\setlist[itemize]{leftmargin=1.3em,itemsep=2pt,topsep=3pt}
+\setlist[enumerate]{leftmargin=1.5em,itemsep=2pt,topsep=3pt}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Callout boxes
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newtcolorbox{plainenglish}[1][In plain English]{
+  breakable, enhanced, colback=primarylt, colframe=primary,
+  boxrule=0pt, leftrule=3pt, arc=1pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
+  fonttitle=\sffamily\bfseries\small, coltitle=primary,
+  attach boxed title to top left={xshift=6pt,yshift=-2pt},
+  boxed title style={colback=primarylt,boxrule=0pt,arc=0pt,left=2pt,right=2pt,top=1pt,bottom=1pt},
+  title={#1}, top=14pt}
+
+\newtcolorbox{keyidea}[1][Key idea]{
+  breakable, enhanced, colback=greenlt, colframe=greenbox,
+  boxrule=0pt, leftrule=3pt, arc=1pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
+  fonttitle=\sffamily\bfseries\small, coltitle=greenbox,
+  attach boxed title to top left={xshift=6pt,yshift=-2pt},
+  boxed title style={colback=greenlt,boxrule=0pt,arc=0pt,left=2pt,right=2pt,top=1pt,bottom=1pt},
+  title={#1}, top=14pt}
+
+\newtcolorbox{warningbox}[1][Watch out]{
+  breakable, enhanced, colback=redlt, colframe=redbox,
+  boxrule=0pt, leftrule=3pt, arc=1pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
+  fonttitle=\sffamily\bfseries\small, coltitle=redbox,
+  attach boxed title to top left={xshift=6pt,yshift=-2pt},
+  boxed title style={colback=redlt,boxrule=0pt,arc=0pt,left=2pt,right=2pt,top=1pt,bottom=1pt},
+  title={#1}, top=14pt}
+
+\newtcolorbox{rulebox}[1][Rule of thumb]{
+  breakable, enhanced, colback=amberlt, colframe=amber,
+  boxrule=0pt, leftrule=3pt, arc=1pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
+  fonttitle=\sffamily\bfseries\small, coltitle=amber,
+  attach boxed title to top left={xshift=6pt,yshift=-2pt},
+  boxed title style={colback=amberlt,boxrule=0pt,arc=0pt,left=2pt,right=2pt,top=1pt,bottom=1pt},
+  title={#1}, top=14pt}
+
+% Shorthand macros
+\newcommand{\R}{\textsf{R}}
+\newcommand{\fn}[1]{\texttt{#1}}
+\newcommand{\pkg}[1]{\textsf{#1}}
+\newcommand{\E}{\operatorname{E}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\logit}{\operatorname{logit}}
+
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+\renewcommand{\arraystretch}{1.15}
+\setlength{\tabcolsep}{3pt}
+
+\begin{document}
+
+<<setup, include=FALSE>>=
+library(knitr)
+opts_chunk$set(
+  comment    = "#>",
+  prompt     = FALSE,
+  tidy       = FALSE,
+  size       = "footnotesize",
+  fig.align  = "center",
+  fig.pos    = "H",
+  out.width  = "0.85\\textwidth",
+  fig.width  = 7,
+  fig.height = 4.2,
+  dev        = "pdf",
+  cache      = FALSE,
+  fig.path   = "figure/",
+  warning    = FALSE,
+  message    = FALSE,
+  background = "#F6F7F9"
+)
+options(width = 90, digits = 4, scipen = 3, show.signif.stars = TRUE)
+set.seed(2024)
+
+## Hard-wrap any output line that would run past the right margin (mostly the
+## long warning messages that lme4 and glmmTMB emit).
+wrap_lines <- function(x, n = 94) {
+  ls <- unlist(strsplit(x, "\n", fixed = TRUE))
+  ls <- unlist(lapply(ls, function(l) {
+    if (nchar(l) <= n) return(l)
+    strwrap(l, width = n, exdent = 5)
+  }))
+  paste(ls, collapse = "\n")
+}
+for (h in c("output", "warning", "message")) local({
+  hh <- knit_hooks$get(h)
+  knit_hooks$set(setNames(list(function(x, options) hh(wrap_lines(x), options)), h))
+})
+
+## A consistent look for base-R plots used throughout the book
+PAL <- c(primary = "#114A66", accent = "#C05621", green = "#1F6E4A",
+         red = "#9D2D2D", grey = "#8A97A0", amber = "#96660A",
+         purple = "#5B4B8A", teal = "#0F7B7B")
+par_book <- function(...) {
+  par(mar = c(4.2, 4.2, 2.4, 1.2), mgp = c(2.5, 0.7, 0), tcl = -0.3,
+      cex.main = 1.0, cex.lab = 0.95, cex.axis = 0.85,
+      col.axis = "#1C2630", col.lab = "#1C2630", col.main = "#114A66",
+      font.main = 1, bty = "l", ...)
+}
+grid_book <- function() grid(col = "#E3E8EC", lty = 1, lwd = 0.6)
+@
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Title page
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{titlepage}
+\thispagestyle{empty}
+\vspace*{2.2cm}
+{\color{rule1}\hrule height 2pt}
+\vspace{1.0cm}
+{\sffamily\bfseries\color{primary}\fontsize{34}{40}\selectfont
+Logistic, Poisson and\\ Count Regression\\ with Mixed Models\par}
+\vspace{0.5cm}
+{\sffamily\color{accent}\Large A plain-English, code-first guide in \R\par}
+\vspace{1.2cm}
+{\color{rule1}\hrule height 1pt}
+\vspace{0.9cm}
+{\sffamily\normalsize\color{ink}
+Binary outcomes \textbullet{} counts \textbullet{} rates and offsets \textbullet{}
+overdispersion \textbullet{} quasi-likelihood \textbullet{} negative binomial \textbullet{}
+zero-inflation and hurdles \textbullet{} model checking \textbullet{}
+likelihood-ratio, Wald and score tests \textbullet{} random effects, GLMMs and GEEs\par}
+\vfill
+{\sffamily\small\color{primary}
+Every code block in this book was executed to produce the output and figures shown.\\
+Built with \Sexpr{R.version.string} using \pkg{stats}, \pkg{MASS}, \pkg{lme4},
+\pkg{glmmTMB}, \pkg{pscl}, \pkg{AER}, \pkg{sandwich} and \pkg{lmtest}.\par}
+\vspace{0.6cm}
+{\color{rule1}\hrule height 2pt}
+\end{titlepage}
+
+\pagenumbering{roman}
+\setcounter{page}{1}
+{\hypersetup{linkcolor=ink}
+\tableofcontents}
+\cleardoublepage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+<<child='parts/ch00-howto.Rnw'>>=
+@
+
+<<child='parts/ch01-bigpicture.Rnw'>>=
+@
+
+<<child='parts/ch02-glm.Rnw'>>=
+@
+
+<<child='parts/ch03-logistic1.Rnw'>>=
+@
+
+<<child='parts/ch04-logistic2.Rnw'>>=
+@
+
+<<child='parts/ch05-poisson1.Rnw'>>=
+@
+
+<<child='parts/ch06-offsets.Rnw'>>=
+@
+
+<<child='parts/ch07-overdispersion.Rnw'>>=
+@
+
+<<child='parts/ch08-quasi.Rnw'>>=
+@
+
+<<child='parts/ch09-negbin.Rnw'>>=
+@
+
+<<child='parts/ch10-zeros.Rnw'>>=
+@
+
+<<child='parts/ch11-othercounts.Rnw'>>=
+@
+
+<<child='parts/ch12-diagnostics.Rnw'>>=
+@
+
+<<child='parts/ch13-tests.Rnw'>>=
+@
+
+<<child='parts/ch14-mixed1.Rnw'>>=
+@
+
+<<child='parts/ch15-glmm.Rnw'>>=
+@
+
+<<child='parts/ch16-marginal.Rnw'>>=
+@
+
+<<child='parts/ch17-convergence.Rnw'>>=
+@
+
+<<child='parts/ch18-worked.Rnw'>>=
+@
+
+<<child='parts/ch19-cheatsheet.Rnw'>>=
+@
+
+\end{document}

@@ -1,0 +1,272 @@
+\chapter{Tests, comparisons and model selection}
+
+<<ch13-setup, echo=FALSE>>=
+data(quine, package = "MASS")
+m_nb <- MASS::glm.nb(Days ~ Eth + Sex + Age + Lrn, data = quine)
+data(birthwt, package = "MASS")
+bw <- within(birthwt, {
+  race  <- factor(race, levels = 1:3, labels = c("white", "black", "other"))
+  smoke <- factor(smoke, levels = 0:1, labels = c("no", "yes"))
+  ht    <- factor(ht, levels = 0:1, labels = c("no", "yes"))
+  ui    <- factor(ui, levels = 0:1, labels = c("no", "yes"))
+})
+@
+
+\section{The three classical tests}
+
+Every likelihood-based model comes with three ways to test a hypothesis. They
+answer the same question and usually agree, but they measure different things.
+
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\footnotesize]
+\begin{scope}
+\draw[->, thick, draw=rule1] (0,0) -- (7.4,0) node[right, text=ink] {$\beta$};
+\draw[->, thick, draw=rule1] (0,-0.1) -- (0,3.4) node[above, text=ink] {log-likelihood};
+\draw[very thick, primary] plot[domain=0.3:7, samples=100]
+  (\x, {3 - 0.30*(\x-4)*(\x-4)});
+\draw[dashed, draw=rule1] (4,0) -- (4,3);
+\node[below, text=primary] at (4,0) {$\hat\beta$};
+\draw[dashed, draw=rule1] (1.5,0) -- (1.5,{3 - 0.30*(1.5-4)*(1.5-4)});
+\node[below, text=redbox] at (1.5,0) {$\beta_0$};
+\draw[<->, thick, greenbox] (1.15,{3 - 0.30*(1.5-4)*(1.5-4)}) -- (1.15,3);
+\node[left, text=greenbox, align=right] at (1.05,1.7)
+  {\textbf{LRT}\\ height\\ difference};
+\draw[<->, thick, accent] (1.5,-0.55) -- (4,-0.55);
+\node[below, text=accent] at (2.75,-0.55) {\textbf{Wald}: horizontal distance};
+\draw[very thick, redbox] (0.6,{3 - 0.30*(1.5-4)*(1.5-4) - 0.75*1.5})
+  -- (2.5,{3 - 0.30*(1.5-4)*(1.5-4) + 0.75*1.0});
+\node[right, text=redbox, align=left] at (2.55,{3 - 0.30*(1.5-4)*(1.5-4)+0.55})
+  {\textbf{Score}: slope at $\beta_0$};
+\end{scope}
+\end{tikzpicture}
+\end{center}
+
+\begin{center}
+\small\sffamily
+\begin{tabular}{@{}p{0.18\textwidth}p{0.34\textwidth}p{0.42\textwidth}@{}}
+\toprule
+\textbf{Test} & \textbf{What it measures} & \textbf{In \R} \\
+\midrule
+Likelihood ratio & How much the log-likelihood drops when you impose the null &
+  \fn{anova(m1, m2, test="LRT")}, \fn{lmtest::lrtest} \\
+Wald & How many standard errors $\hat\beta$ is from the null value &
+  the $z$ column of \fn{summary()} \\
+Score (Lagrange multiplier) & The slope of the log-likelihood at the null &
+  \fn{anova(\dots, test="Rao")} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All three are asymptotically equivalent. In finite samples the likelihood-ratio
+test is generally the most reliable, and the Wald test is the least --- but the
+Wald test is the one printed by default, which is why it is the one everybody uses.
+
+<<three-tests>>=
+full <- glm(low ~ age + lwt + race + smoke + ht + ui, family = binomial, data = bw)
+red  <- update(full, . ~ . - race)                # drop a 2-df factor
+
+## Likelihood ratio
+anova(red, full, test = "LRT")
+## Score (Rao)
+anova(red, full, test = "Rao")
+## Wald, for the same 2-df hypothesis
+car::Anova(full, type = "II")["race", ]
+@
+
+\begin{warningbox}[The Wald test misbehaves for large effects]
+When a coefficient is large, its standard error is inflated too, and the Wald
+statistic can shrink back towards zero --- the Hauck--Donner effect. In the extreme
+case of complete separation (Chapter 4) the Wald $p$-value approaches 1 for a
+perfect predictor. The likelihood-ratio test does not have this problem. If a Wald
+test and an LRT disagree, believe the LRT.
+\end{warningbox}
+
+\section{Comparing nested models}
+
+Two models are \emph{nested} when one is a special case of the other. Then you can
+use the difference in deviance:
+\[
+\Delta D = D_{\text{reduced}} - D_{\text{full}} \sim \chi^2_{\Delta \text{df}}
+\quad\text{under the null.}
+\]
+
+<<nested>>=
+m1 <- MASS::glm.nb(Days ~ Age, data = quine)
+m2 <- MASS::glm.nb(Days ~ Age + Eth, data = quine)
+m3 <- MASS::glm.nb(Days ~ Age + Eth + Sex + Lrn, data = quine)
+anova(m1, m2, m3)
+@
+
+\begin{warningbox}[Do not compare models fitted to different data]
+If a predictor has missing values, adding it silently drops rows, and the two
+models are then fitted to different datasets --- so the deviance difference is
+meaningless. Guard against it by subsetting to complete cases first:
+\fn{d <- na.omit(d[, all.vars(formula\_of\_largest\_model)])}.
+\end{warningbox}
+
+<<na-trap>>=
+d <- quine
+d$Lrn[1:20] <- NA                          # pretend some values are missing
+a <- MASS::glm.nb(Days ~ Age, data = d)
+b <- MASS::glm.nb(Days ~ Age + Lrn, data = d)
+c(n_a = nobs(a), n_b = nobs(b))            # different sample sizes -- do not compare
+@
+
+\section{Comparing non-nested models: AIC and BIC}
+
+\[
+\text{AIC} = -2\ell + 2k, \qquad \text{BIC} = -2\ell + k\log n
+\]
+where $\ell$ is the maximised log-likelihood and $k$ the number of parameters.
+Lower is better; only differences matter.
+
+<<aic-bic>>=
+mp   <- glm(Days ~ Eth + Sex + Age + Lrn, family = poisson, data = quine)
+mnb  <- MASS::glm.nb(Days ~ Eth + Sex + Age + Lrn, data = quine)
+mnb2 <- MASS::glm.nb(Days ~ Eth * Age + Sex + Lrn, data = quine)
+
+tab <- data.frame(
+  model = c("Poisson", "NB", "NB with Eth x Age"),
+  df    = c(length(coef(mp)), length(coef(mnb)) + 1, length(coef(mnb2)) + 1),
+  logLik = round(c(logLik(mp), logLik(mnb), logLik(mnb2)), 2),
+  AIC   = round(c(AIC(mp), AIC(mnb), AIC(mnb2)), 1),
+  BIC   = round(c(BIC(mp), BIC(mnb), BIC(mnb2)), 1)
+)
+tab$dAIC <- round(tab$AIC - min(tab$AIC), 1)
+tab
+@
+
+\begin{rulebox}[Reading $\Delta$AIC]
+$\Delta < 2$: the models are practically indistinguishable. \\
+$2 < \Delta < 7$: moderate evidence for the better one. \\
+$\Delta > 10$: strong evidence; the worse model has essentially no support. \\
+BIC penalises complexity more heavily as $n$ grows, so it prefers smaller models.
+Use AIC when you care about prediction, BIC when you believe a true model exists
+and want to find it.
+\end{rulebox}
+
+\begin{warningbox}[AIC cannot cross model families]
+Comparing AIC between a Poisson and a negative binomial is fine --- both are
+likelihoods for the same response. Comparing AIC between a model for \fn{y} and a
+model for \fn{log(y)} is not, because the likelihoods are on different scales. And
+quasi-Poisson models have no likelihood at all, so they have no AIC. Use QAIC
+(Chapter 8) there.
+\end{warningbox}
+
+\section{Akaike weights}
+
+Turn $\Delta$AIC into something interpretable:
+
+<<akaike-weights>>=
+w <- exp(-0.5 * tab$dAIC); w <- w / sum(w)
+data.frame(model = tab$model, dAIC = tab$dAIC, weight = round(w, 4))
+@
+
+The weight is the relative probability that each model is the best of those
+considered, given the data and this criterion.
+
+\section{Tests specific to count models}
+
+<<count-tests, message=TRUE>>=
+## 1. Is there overdispersion? (Chapter 7)
+AER::dispersiontest(mp, trafo = 2)
+
+## 2. Is the negative binomial better than the Poisson? (boundary-corrected LRT)
+pscl::odTest(mnb)
+@
+
+<<vuong-test, message=TRUE>>=
+## 3. Non-nested comparison, e.g. zero-inflated vs hurdle
+data(bioChemists, package = "pscl")
+z <- pscl::zeroinfl(art ~ fem + mar + kid5 + ment | fem + ment,
+                    data = bioChemists, dist = "negbin")
+h <- pscl::hurdle(art ~ fem + mar + kid5 + ment | fem + ment,
+                  data = bioChemists, dist = "negbin")
+pscl::vuong(z, h)
+@
+
+\section{How much does the model explain?}
+
+There is no single $R^2$ for a GLM. Several competing versions exist, and they give
+different numbers.
+
+<<pseudo-r2>>=
+pseudo_r2 <- function(model, null_model) {
+  L1 <- as.numeric(logLik(model)); L0 <- as.numeric(logLik(null_model))
+  n  <- nobs(model)
+  c(McFadden   = 1 - L1 / L0,
+    CoxSnell   = 1 - exp(2 * (L0 - L1) / n),
+    Nagelkerke = (1 - exp(2 * (L0 - L1) / n)) / (1 - exp(2 * L0 / n)))
+}
+round(pseudo_r2(mnb, MASS::glm.nb(Days ~ 1, data = quine)), 4)
+round(pseudo_r2(full, glm(low ~ 1, family = binomial, data = bw)), 4)
+@
+
+\begin{plainenglish}[How to read a pseudo-$R^2$]
+McFadden's is the most common and the most pessimistic; values of 0.2--0.4 already
+indicate a good fit, so do not be alarmed by a small number. Nagelkerke's is
+rescaled to reach 1 and looks more like the $R^2$ you are used to. Report which one
+you used, because they are not comparable with each other.
+\end{plainenglish}
+
+\section{Cross-validation}
+
+For prediction, none of the above beats simply holding data out. Here is $K$-fold
+cross-validation for a count model, scored with mean absolute error and with the
+log score.
+
+<<cv-count>>=
+set.seed(2)
+K     <- 10
+folds <- sample(rep(1:K, length.out = nrow(quine)))
+score <- function(fit_fun, pred_fun) {
+  mae <- ll <- numeric(K)
+  for (k in 1:K) {
+    tr <- quine[folds != k, ]; te <- quine[folds == k, ]
+    m  <- fit_fun(tr)
+    p  <- predict(m, newdata = te, type = "response")
+    mae[k] <- mean(abs(te$Days - p))
+    ll[k]  <- mean(pred_fun(te$Days, p, m))
+  }
+  c(MAE = mean(mae), mean_logLik = mean(ll))
+}
+round(rbind(
+  poisson = score(function(d) glm(Days ~ Eth + Sex + Age + Lrn, poisson, d),
+                  function(y, p, m) dpois(y, p, log = TRUE)),
+  negbin  = score(function(d) MASS::glm.nb(Days ~ Eth + Sex + Age + Lrn, data = d),
+                  function(y, p, m) dnbinom(y, mu = p, size = m$theta, log = TRUE))
+), 4)
+@
+
+The two models predict the mean about equally well (similar MAE) --- as they should,
+since overdispersion does not bias the mean. But the negative binomial assigns far
+higher probability to the data actually observed, which is what the log score
+captures.
+
+\begin{keyidea}[The distinction that matters]
+Getting the \emph{mean} right and getting the \emph{uncertainty} right are separate
+achievements. Mean absolute error only checks the first. Log score, coverage of
+prediction intervals, and rootograms check the second. Overdispersion is entirely a
+failure of the second kind.
+\end{keyidea}
+
+\section{A note on stepwise selection}
+
+<<stepwise, results='hide'>>=
+step_model <- MASS::stepAIC(mnb2, direction = "both", trace = FALSE)
+@
+<<stepwise-show>>=
+formula(step_model)
+@
+
+It runs, and it is tempting. But automated stepwise selection inflates $R^2$,
+biases coefficients away from zero, produces standard errors and $p$-values that
+are known to be wrong, and is unstable --- resample your data and you often get a
+different model.
+
+\begin{rulebox}
+Prefer a model specified from subject knowledge. If you must select, use
+penalisation (\pkg{glmnet}) or model averaging rather than stepwise, and if you do
+use stepwise, report that you did and treat the resulting $p$-values as descriptive
+rather than inferential.
+\end{rulebox}
