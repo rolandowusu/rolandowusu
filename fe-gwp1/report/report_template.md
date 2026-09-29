@@ -264,7 +264,9 @@ The penalty per extra parameter is lightest for $\bar R^2$ (a variable is kept w
 
 {{FIG|p3_scatter|Figure 3.1 — y against each candidate predictor.}}
 
-[[P3_STEP1_TEXT]]
+All five predictors have means close to zero and similar spreads (standard deviations from 0.48 for x1 to about 1.08 for x4 and x5), so their coefficients can be compared directly. The correlations with y point to x4 (0.54), x2 (−0.42) and x3 (0.41) as the strongest candidates, x5 (−0.28) as weaker, and x1 (−0.06) as essentially unrelated to y.
+
+The predictors are almost uncorrelated with each other. The largest correlation between two of them is −0.18 (x3 and x5), and every VIF is below 1.1, so multicollinearity is not a concern. This matters for selection: with nearly orthogonal predictors, coefficients barely change when variables are added or dropped, and the search methods are not pulled in different directions by redundant variables. The scatter plots show no curvature and no extreme points that would call for a transformation or special treatment.
 
 **Step 2: the full model.**
 
@@ -272,7 +274,7 @@ The penalty per extra parameter is lightest for $\bar R^2$ (a variable is kept w
 
 {{TAB|p3_full}}
 
-[[P3_STEP2_TEXT]]
+In the full model x2, x3 and x4 are highly significant (|t| > 6), x5 is significant at 5% (t = −2.33, p = 0.022), and x1 is clearly not (t = −0.15, p = 0.88). $R^2=0.649$ and $\bar R^2=0.630$. The $t$-tests already suggest that x1 does not belong, but a set of individual $t$-tests is not a selection procedure, so we now compare the candidate models systematically.
 
 **Step 3: all-subsets search.**
 
@@ -286,7 +288,9 @@ The penalty per extra parameter is lightest for $\bar R^2$ (a variable is kept w
 
 {{FIG|p3_criteria_by_size|Figure 3.2 — Adjusted R², AIC and BIC for all 32 models; the line joins the best model of each size.}}
 
-[[P3_STEP3_TEXT]]
+All three criteria choose the same model: **x2 + x3 + x4 + x5** has the highest adjusted $R^2$ (0.634), the lowest AIC (260.62) and the lowest BIC (273.64) of all 32 models. Table 3.5 shows why. $R^2$ climbs steeply as x4, x3 and x2 enter (0.29, 0.48, 0.63), rises a little further with x5 (0.649), and does not move at all when x1 is added (0.6488 in both cases). The fifth variable adds nothing, so every criterion penalises it.
+
+The case for x5 is weaker than for the others. Under BIC the four-variable model beats the best three-variable model (x2 + x3 + x4) by only 1.07 points (273.64 against 274.71); under AIC the gap is 3.67. This fits the thresholds described in the plan: x5's $|t|$ of 2.36 is well above AIC's $\sqrt2\approx1.41$ but only just above BIC's $\sqrt{\ln 100}\approx2.15$.
 
 **Step 4: stepwise procedures.**
 
@@ -302,7 +306,7 @@ The penalty per extra parameter is lightest for $\bar R^2$ (a variable is kept w
 
 {{TAB|p3_backward_p}}
 
-[[P3_STEP4_TEXT]]
+The stepwise searches reach the same model by different routes. Forward selection with AIC adds x4, x3, x2 and then x5, and stops because adding x1 would raise AIC from 260.62 to 262.59. Backward elimination with BIC removes x1 in its first step (BIC falls from 278.22 to 273.64), and stops because removing x5 next would raise BIC to 274.71. Backward elimination by $t$-tests also drops x1 first ($p=0.88$), then stops because x5 is significant ($p=0.021$). Because the predictors are nearly uncorrelated, the forward and backward paths agree; with correlated predictors they can end in different places, which is one reason we also ran the exhaustive search.
 
 **Step 5: out-of-sample check.**
 
@@ -310,7 +314,7 @@ The penalty per extra parameter is lightest for $\bar R^2$ (a variable is kept w
 
 {{TAB|p3_cv}}
 
-[[P3_STEP5_TEXT]]
+Every procedure chose the same model, so cross-validation compares it with the full model and with the best three-variable model. The full model predicts slightly worse out of sample (MSE 0.865 against 0.854), as expected when an irrelevant variable is included. The three-variable model x2 + x3 + x4 does marginally better (0.846), but the difference, {{VAL|p3_cv_diff|.4f}}, is tiny next to its fold-to-fold standard error of {{VAL|p3_cv_diff_se|.3f}}. Cross-validation therefore cannot tell these two models apart; it only confirms that x5 is the least certain of the four variables.
 
 **Step 6: final model and diagnostics.**
 
@@ -324,7 +328,12 @@ The penalty per extra parameter is lightest for $\bar R^2$ (a variable is kept w
 
 {{FIG|p3_final_diag|Figure 3.3 — Residual diagnostics for the final model.}}
 
-[[P3_CONCLUSION_TEXT]]
+The fitted final model is
+$$\hat y=1.189-0.586\,x_2+0.559\,x_3+0.711\,x_4-0.197\,x_5$$
+with $R^2=0.649$, $\bar R^2=0.634$ and $n=100$.
+The coefficients are almost identical to those in the full model, which is what near-orthogonal predictors lead us to expect. The residual checks raise no concerns: the Jarque–Bera test does not reject normality ($p=0.14$), Breusch–Pagan finds no heteroskedasticity ($p=0.65$), RESET finds no missing non-linearity ($p=0.95$), and the residual plots show no pattern.
+
+**Conclusion.** The best model for y uses **x2, x3, x4 and x5**. We did not pick it by trial and error. Five separate procedures (all-subsets search under adjusted $R^2$, AIC and BIC; forward selection with AIC; backward elimination with BIC; and backward elimination with $t$-tests) all arrive at it, and it passes the diagnostic checks. Every method rejects x1, which has no explanatory power. Every formal criterion keeps x5, but it is the weakest of the four; an analyst who wanted the most parsimonious model could defend x2 + x3 + x4 at almost no cost in predictive accuracy. One caution: the $p$-values in Table 3.11 come from the same data that were used to choose the model, so they are somewhat optimistic.
 {{ENDIF}}
 
 ## Question 3b
@@ -474,9 +483,9 @@ which is what the estimates in 5c should resemble. The rank cannot be 3, because
 
 *Using `dataset_Prob5.csv`: visual inspection, unit-root tests, Johansen trace and maximum-eigenvalue tests, cointegration rank, and VECM estimation.*
 
-**Approach.** (1) Plot the levels, first differences, autocorrelation functions and pairwise scatter plots. (2) Test each series for a unit root with the augmented Dickey–Fuller (ADF) test (null: unit root; lag length by AIC; with constant, and with constant and trend) and cross-check with KPSS (null: stationarity), on levels and on first differences. (3) Choose the VAR lag length $p$ in levels by information criteria; the VECM then has $p-1$ lagged differences. (4) Run the Johansen procedure with an unrestricted constant and read the trace and maximum-eigenvalue statistics sequentially, starting from $r=0$ and stopping at the first null that is not rejected at 5%. (5) Estimate the VECM
-$$\Delta \mathbf y_t=\alpha\beta'\,(\mathbf y_{t-1},1)'+\sum_{j=1}^{p-1}\Gamma_j\,\Delta\mathbf y_{t-j}+\mathbf u_t,$$
-where $\beta$ holds the cointegrating vectors (with the constant restricted to the cointegrating relations) and $\alpha$ the adjustment speeds. (6) Compare $\hat\beta$ with the theory in 5b and check the residuals.
+**Approach.** (1) Plot the levels, first differences, autocorrelation functions and pairwise scatter plots. (2) Test each series for a unit root with the augmented Dickey–Fuller (ADF) test (null: unit root; lag length by AIC; with constant, and with constant and trend) and cross-check with KPSS (null: stationarity), on levels and on first differences. (3) Choose the VAR lag length $p$ in levels by information criteria; the VECM then has $p-1$ lagged differences. (4) Run the Johansen procedure with a constant restricted to the cointegrating relations (the case that fits series with no trend) and read the trace and maximum-eigenvalue statistics sequentially, starting from $r=0$ and stopping at the first null that is not rejected at 5%. (5) Estimate the VECM
+$$\Delta \mathbf y_t=\alpha\,(\beta'\mathbf y_{t-1}+\mathbf c)+\sum_{j=1}^{p-1}\Gamma_j\,\Delta\mathbf y_{t-j}+\mathbf u_t,$$
+where $\beta$ holds the cointegrating vectors, $\mathbf c$ their constants, and $\alpha$ the adjustment speeds. (6) Compare $\hat\beta$ with the theory in 5b and check the residuals.
 
 {{IFDATA|5c}}
 **1. Visual inspection.** The data set has {{VAL|p5_T|}} observations.
@@ -491,7 +500,9 @@ where $\beta$ holds the cointegrating vectors (with the constant restricted to t
 
 {{TAB|p5_describe}}
 
-[[P5_VISUAL_TEXT]]
+All three series wander far from their starting values and do not return to a fixed mean. X, for instance, starts near zero, falls to about −14 around period 105, comes back close to zero between periods 210 and 260, and then falls again. There is no steady upward or downward trend, so no deterministic time trend is needed. X and Z are close to mirror images, and Y follows X with smaller swings. This is exactly what one shared random walk with loadings 1, 0.5 and −1 produces.
+
+The first differences, by contrast, fluctuate around zero with a stable spread. The ACFs of the levels decay very slowly (still about 0.4 at lag 30), the classic sign of a unit root. The ACFs of the differences show a single negative spike at lag 1 and nothing after it. 5a predicts this: $\Delta X_t=\varepsilon_t+\eta_t-\eta_{t-1}$ is an MA(1) with first-order autocorrelation $-\sigma^2_\eta/(\sigma^2_\varepsilon+2\sigma^2_\eta)<0$. The scatter plots show very tight linear relations between the levels (correlations 0.961, −0.989 and −0.961), which already hints at cointegration.
 
 **2. Unit-root tests.**
 
@@ -499,7 +510,7 @@ where $\beta$ holds the cointegrating vectors (with the constant restricted to t
 
 {{TAB|p5c_unitroot}}
 
-[[P5_UNITROOT_TEXT]]
+For all three series in levels, ADF cannot reject a unit root ($p$ between 0.12 and 0.30 with a constant, between 0.21 and 0.35 with a constant and trend), and KPSS rejects stationarity at 1%. (statsmodels reports KPSS $p$-values only within 0.01–0.10, so 0.0100 means $p<0.01$ and 0.1000 means $p>0.10$.) In first differences the picture reverses: ADF rejects a unit root with $p<0.001$, and KPSS does not reject stationarity. The two tests have opposite null hypotheses and agree here, so **X, Y and Z are each I(1)**, as derived in 5a. This is the condition that makes a cointegration analysis meaningful.
 
 **3. Lag length.**
 
@@ -507,45 +518,74 @@ where $\beta$ holds the cointegrating vectors (with the constant restricted to t
 
 {{TAB|p5c_lagselect}}
 
-[[P5_LAG_TEXT]]
+AIC, BIC and HQ all choose $p=1$, so the VECM has $p-1=0$ lagged differences. The residuals of that VECM show no remaining autocorrelation (Table 5.11), which supports the choice. Versions with one and two lagged differences are reported as robustness checks.
 
 **4. Johansen cointegration test.**
 
-*Table 5.4 — Johansen trace test (critical values at 90/95/99%).*
+*Deterministic terms.* The series drift without a trend and the model in the question has no deterministic terms. The standard choice for such data is a constant **restricted to the cointegrating relations** (Johansen's "case 2"). Each long-run relation may then have a non-zero mean, but the levels have no trend. This also matches the VECM estimated in step 5. statsmodels' `coint_johansen` does not offer this case, so the notebook computes the test directly by reduced-rank regression. As a check, the same code reproduces statsmodels' statistics exactly for the two cases statsmodels does offer (no deterministic terms, and unrestricted constant). The critical values for case 2 were simulated (20,000 replications of $n-r$ independent random walks of length 500) and agree closely with the published Osterwald-Lenum (1992) tables; the same simulations give the $p$-values.
 
-{{TAB|p5c_johansen_trace}}
+*Table 5.4 — Simulated critical values for the restricted-constant case.*
 
-*Table 5.5 — Johansen maximum-eigenvalue test (critical values at 90/95/99%).*
+{{TAB|p5c_cv_sim}}
 
-{{TAB|p5c_johansen_maxeig}}
+*Table 5.5 — Johansen trace and maximum-eigenvalue tests (restricted constant, 0 lagged differences).*
 
-*Table 5.6 — Rank selected at 5% for different numbers of lagged differences.*
+{{TAB|p5c_johansen}}
+
+Reading the trace test in sequence: $r=0$ is rejected (435.8 against a 5% critical value of 35.4), $r\le1$ is rejected (203.3 against 20.3), and $r\le2$ is **not** rejected (4.66 against 9.11, $p=${{VAL|p5_trace_r2_p|.2f}}). The maximum-eigenvalue test gives the same sequence. **Both tests give a cointegration rank of $r=2$**: two cointegrating vectors and one common stochastic trend, exactly as derived in 5b. The eigenvalues tell the same story, with two large values (0.54 and 0.49) and a third close to zero (0.015).
+
+*Table 5.6 — Rank chosen at 5% under other specifications.*
 
 {{TAB|p5c_johansen_robust}}
 
-[[P5_JOHANSEN_TEXT]]
+*Table 5.7 — Johansen statistics from statsmodels for its two built-in specifications (0 lagged differences).*
 
-**5. VECM estimates.**
+{{TAB|p5c_johansen_sm}}
 
-*Table 5.7 — Cointegrating vectors $\hat\beta$ (normalised; constant restricted to the cointegration space).*
+The rank of 2 holds for every lag length from 0 to 4 and for the no-constant and unrestricted-constant versions. Only one combination disagrees: an unrestricted constant together with one lagged difference. There the $r\le2$ trace statistic is {{VAL|p5_uc_k1_r2_stat|.2f}} against a 5% critical value of {{VAL|p5_uc_k1_r2_cv95|.2f}}, which would give rank 3 at 5% (though not at 1%, where the critical value is {{VAL|p5_uc_k1_r2_cv99|.2f}}). We do not accept that result, for three reasons. A rank of 3 would mean every series is stationary, which the unit-root tests clearly reject. That specification allows a linear trend in the levels, which the data do not show. And the rejection is borderline and disappears under every other specification.
+
+**5. VECM estimates.** With $r=2$, a constant restricted to the cointegrating relations and no lagged differences, the model is
+$$\Delta\mathbf y_t=\alpha\,(\beta'\mathbf y_{t-1}+\mathbf c)+\mathbf u_t,\qquad \mathbf y_t=(X_t,Y_t,Z_t)' .$$
+
+*Table 5.8 — Cointegrating vectors $\hat\beta$ (normalised so the top block is the identity) and their constants.*
 
 {{TAB|p5c_beta}}
 
-*Table 5.8 — Adjustment coefficients $\hat\alpha$ with standard errors and t-statistics.*
+*Table 5.9 — Adjustment coefficients $\hat\alpha$.*
 
 {{TAB|p5c_alpha}}
 
-*Table 5.9 — Short-run coefficients $\hat\Gamma$.*
+Written out, the estimated system is
+$$\begin{aligned}
+\Delta X_t&=-0.471\,\text{ect}_{1,t-1}+0.261\,\text{ect}_{2,t-1}+u_{X,t}\\
+\Delta Y_t&=\phantom{-}0.149\,\text{ect}_{1,t-1}-0.934\,\text{ect}_{2,t-1}+u_{Y,t}\\
+\Delta Z_t&=-0.533\,\text{ect}_{1,t-1}-0.257\,\text{ect}_{2,t-1}+u_{Z,t}
+\end{aligned}
+\qquad
+\begin{aligned}
+\text{ect}_{1,t}&=X_t+1.008\,Z_t-0.090\\
+\text{ect}_{2,t}&=Y_t+0.416\,Z_t-0.154
+\end{aligned}$$
 
-{{TAB|p5c_gamma}}
+*Long-run relations.* The theory in 5b says the cointegration space is spanned by $X+Z$ and $Y+0.5Z$ in this normalisation. The estimates are $X+1.008Z$ (standard error on Z 0.009, $t=${{VAL|p5_bz1_t|.2f}} against the theoretical value 1) and $Y+0.416Z$ (standard error 0.065, $t=${{VAL|p5_bz2_t|.2f}} against 0.5). Neither differs significantly from theory, so the data support the relations derived in 5b. Eliminating Z between the two relations gives $X-2.42\,Y$, against the $X-2Y$ of 5b. The ratio 1.008/0.416 carries the larger sampling error of the second vector (a delta-method standard error of about 0.38), so this is also consistent with theory. The constants ($-0.09$ and $-0.15$) are small relative to the scale of the series.
 
-{{FIG|p5c_ect|Figure 5.5 — Estimated cointegrating relations $\hat\beta'\mathbf y_t$ (demeaned).}}
+*Adjustment.* When $X+Z$ is above its long-run level, X and Z both fall in the next period (α = −0.47 and −0.53, $|t|\approx5$), which pulls the sum back; the two variables share the correction about equally. Deviations in the second relation are corrected almost entirely by Y (α = −0.93, $t=-13.2$), which removes about 93% of a deviation within one period. The remaining loadings are smaller, with $|t|$ between 2.1 and 2.7. Such fast adjustment fits the data-generating process: the deviations from the long-run relations are combinations of white-noise terms (for example $\eta_t+\chi_t$), so they do not persist.
 
-*Table 5.10 — Residual autocorrelation checks.*
+*Table 5.10 — The long-run coefficients with 0, 1 and 2 lagged differences.*
+
+{{TAB|p5c_beta_robust}}
+
+Adding lagged differences leaves the long-run coefficients essentially unchanged (1.006–1.008 and 0.415–0.416). A likelihood-ratio test would add one lag (LR = {{VAL|p5_lr_k1|.1f}}, $p=${{VAL|p5_lr_k1_p|.3f}}) even though all three information criteria prefer none. Since the extra lag only captures some short-run dynamics and changes none of the conclusions, we keep the specification the criteria choose.
+
+{{FIG|p5c_ect|Figure 5.5 — Estimated cointegrating relations $\hat\beta'\mathbf y_t$ (demeaned): both fluctuate around zero with no persistence.}}
+
+*Table 5.11 — Residual autocorrelation tests for the VECM.*
 
 {{TAB|p5c_resid}}
 
-[[P5_VECM_TEXT]]
+The Ljung–Box tests on each equation ($p$ = 0.37, 0.96 and 0.49) and the system portmanteau test ($p=0.69$) find no remaining autocorrelation, so the model captures the dynamics adequately.
+
+**Summary of 5c.** Visual inspection and unit-root tests show that X, Y and Z are each I(1). The Johansen trace and maximum-eigenvalue tests both give a cointegration rank of 2. The estimated VECM recovers long-run relations that match the theoretical cointegrating vectors from 5b, with fast and significant error correction.
 {{ENDIF}}
 
 {{PAGEBREAK}}

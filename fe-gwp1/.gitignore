@@ -2,3 +2,5 @@ dist/GWP1_Report.html
 dist/*.print.html
 dist/GWP1_code/
 .ipynb_checkpoints/
+dist/GWP1_notebook.html
+dist/GWP1_notebook.pdf

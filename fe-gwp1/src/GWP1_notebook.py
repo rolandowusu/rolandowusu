@@ -331,7 +331,7 @@ p2c
 
 # %%
 ms_path = os.path.join(DATA_DIR, "FE-GWP1_model_selection_1.csv")
-ms = pd.read_csv(ms_path)
+ms = pd.read_csv(ms_path, encoding="utf-8-sig")
 ms.columns = [c.strip() for c in ms.columns]
 ms = ms.rename(columns={c: c.lower() for c in ms.columns})
 ms = ms[[c for c in ms.columns if c in ["y", "x1", "x2", "x3", "x4", "x5"]]].dropna()
@@ -509,12 +509,33 @@ def cv_mse(vars_, k=10, seed=3):
 cands = {"adj R2 best": best["adj R2"], "AIC best": best["AIC"], "BIC best": best["BIC"],
          "forward AIC": " + ".join(fwd_vars), "backward BIC": " + ".join(bwd_vars),
          "backward p-value": " + ".join(bwp_vars), "full model": " + ".join(PRED)}
+# also the best model with one predictor fewer than the BIC choice, to judge the marginal variable
+_kb = len(best["BIC"].split(" + "))
+if _kb > 1:
+    cands[f"best {_kb - 1}-predictor model"] = best_by_k.loc[_kb - 1, "model"]
 cv = pd.DataFrame([{"selected by": k, "model": v,
                     "k": len(v.split(" + ")) if v and v != "(intercept only)" else 0,
                     "10-fold CV MSE": cv_mse(v.split(" + ") if v and v != "(intercept only)" else [])}
                    for k, v in cands.items()])
 savetab(cv, "p3_cv", floatfmt=".4f", index=False)
-cv
+display(cv)
+
+# Is the CV gap between the BIC model and the best smaller model meaningful?
+def cv_fold_errors(vars_, k=10, seed=3):
+    idx = np.random.default_rng(seed).permutation(len(ms))
+    out = []
+    for f_ in np.array_split(idx, k):
+        tr = ms.drop(ms.index[f_]); te = ms.iloc[f_]
+        m = smf.ols("y ~ " + " + ".join(vars_), data=tr).fit()
+        out.append(((te["y"] - m.predict(te)) ** 2).mean())
+    return np.array(out)
+if _kb > 1:
+    small = best_by_k.loc[_kb - 1, "model"].split(" + ")
+    diffs = cv_fold_errors(best["BIC"].split(" + ")) - cv_fold_errors(small)
+    RESULTS.update({"p3_cv_diff": float(diffs.mean()), "p3_cv_diff_se": float(diffs.std(ddof=1) / np.sqrt(len(diffs))),
+                    "p3_cv_small": " + ".join(small)})
+    print(f"CV MSE difference (BIC model minus {' + '.join(small)}): {diffs.mean():.4f}, "
+          f"s.e. {diffs.std(ddof=1)/np.sqrt(len(diffs)):.4f}")
 
 # %% [markdown]
 # **Final model and diagnostics.** The final model is the one chosen by BIC (see the
@@ -669,16 +690,20 @@ print("ADF p-values -> X:", round(adfuller(Xs)[1], 4), " X-2Y:", round(adfuller(
 
 # %%
 p5_path = os.path.join(DATA_DIR, "FE-GWP1_dataset_Prob5.csv")
-raw5 = pd.read_csv(p5_path)
+# The file wraps each whole row (header included) in one pair of double quotes and
+# starts with a byte-order mark, so a plain read_csv sees a single column.
+# Strip the outer quotes from each line before parsing.
+from io import StringIO
+with open(p5_path, encoding="utf-8-sig") as fh:
+    lines = [ln.strip().strip('"') for ln in fh if ln.strip()]
+raw5 = pd.read_csv(StringIO("\n".join(lines)))
 print(raw5.head()); print(raw5.shape)
 cols = {c: c.strip().upper() for c in raw5.columns}
 d5 = raw5.rename(columns=cols)
 date_col = [c for c in d5.columns if c not in ["X", "Y", "Z"]]
 if date_col:
-    try:
-        d5.index = pd.to_datetime(d5[date_col[0]]);
-    except Exception:
-        d5.index = d5[date_col[0]]
+    d5.index = d5[date_col[0]]          # "Period" = 1, 2, ..., T
+    d5.index.name = date_col[0]
 d5 = d5[["X", "Y", "Z"]].astype(float).dropna()
 RESULTS["p5_T"] = int(len(d5))
 savetab(d5.describe().T, "p5_describe", floatfmt=".3f")
@@ -744,46 +769,144 @@ ic_tab.index.name = "p"
 savetab(ic_tab, "p5c_lagselect", floatfmt=".4f")
 p_bic = int(sel.selected_orders["bic"]); p_aic = int(sel.selected_orders["aic"])
 p_var = max(p_bic, 1)
-k_diff = max(p_var - 1, 1) if p_var > 1 else 1
+k_diff = p_var - 1                      # VAR(p) in levels -> VECM with p-1 lagged differences
 RESULTS.update({"p5_p_aic": p_aic, "p5_p_bic": p_bic, "p5_kdiff": k_diff})
 print("VAR lag chosen by BIC:", p_bic, " by AIC:", p_aic, " -> k_ar_diff used:", k_diff)
 
 # %% [markdown]
-# **Step 4: Johansen test.** Deterministic term: unrestricted constant (`det_order = 0`),
-# which matches series with no visible trend in the levels. We read the trace test
-# sequentially (r = 0, then r ≤ 1, ...) and stop at the first null not rejected; the
-# maximum-eigenvalue test is read the same way.
+# **Step 4: Johansen test.**
+#
+# *Choice of deterministic terms.* The levels wander but show no steady upward or
+# downward drift, and the model in the question has no deterministic terms. The
+# standard choice for such data is a constant **restricted to the cointegrating
+# relations** (Johansen's "case 2"): it lets each long-run relation have a non-zero mean
+# without implying a trend in the levels. It also matches the VECM we estimate in Step 5
+# (`deterministic="ci"`).
+#
+# statsmodels' `coint_johansen` offers only no deterministic terms (`det_order=-1`), an
+# unrestricted constant (`det_order=0`) or a trend, so we compute the restricted-constant
+# test directly with the reduced-rank regression below. To check the code, we first
+# run it on the two cases statsmodels supports and confirm the numbers match.
 
 # %%
-def johansen_table(det_order, k):
-    jo = coint_johansen(d5, det_order, k)
+def johansen_rr(y, k_diff, case):
+    """Johansen reduced-rank regression.
+    case: 'none' = no deterministic terms, 'rc' = constant restricted to the
+    cointegration space, 'uc' = unrestricted constant.
+    Returns eigenvalues, trace statistics and max-eigenvalue statistics for r = 0..n-1."""
+    y = np.asarray(y, float); n = y.shape[1]
+    dy = np.diff(y, axis=0)
+    T = dy.shape[0] - k_diff
+    Z0 = dy[k_diff:]                                   # Δy_t
+    Z1 = y[k_diff:-1]                                  # y_{t-1}
+    Z2 = (np.column_stack([dy[k_diff - j:-j] for j in range(1, k_diff + 1)])
+          if k_diff else np.empty((T, 0)))             # lagged differences
+    if case == "rc": Z1 = np.column_stack([Z1, np.ones(T)])
+    if case == "uc": Z2 = np.column_stack([Z2, np.ones(T)])
+    if Z2.shape[1]:
+        B = np.linalg.lstsq(Z2, np.column_stack([Z0, Z1]), rcond=None)[0]
+        R = np.column_stack([Z0, Z1]) - Z2 @ B
+        R0, R1 = R[:, :n], R[:, n:]
+    else:
+        R0, R1 = Z0, Z1
+    S00, S11, S01 = R0.T @ R0 / T, R1.T @ R1 / T, R0.T @ R1 / T
+    from scipy import linalg
+    lam = linalg.eigh(S01.T @ np.linalg.solve(S00, S01), S11, eigvals_only=True)[::-1][:n]
+    lam = np.clip(lam, 0, 1 - 1e-12)
+    trace = np.array([-T * np.sum(np.log(1 - lam[r:])) for r in range(n)])
+    maxeig = -T * np.log(1 - lam)
+    return lam, trace, maxeig
+
+# Validation against statsmodels for the cases it supports
+chk = []
+for case, det in [("none", -1), ("uc", 0)]:
+    lam, tr, me = johansen_rr(d5, k_diff, case)
+    jo_ = coint_johansen(d5, det, k_diff)
+    chk.append({"case": case, "max |diff| eigenvalues": np.abs(lam - jo_.eig).max(),
+                "max |diff| trace": np.abs(tr - jo_.lr1).max(), "max |diff| max-eig": np.abs(me - jo_.lr2).max()})
+pd.DataFrame(chk)
+
+# %% [markdown]
+# *Critical values for the restricted-constant case.* The asymptotic distributions depend
+# only on n − r and on the deterministic case. We simulate them: for m = n − r = 1, 2, 3,
+# generate m independent random walks of length 500, compute the r = 0 statistics, and
+# repeat 20,000 times (seed 2025). The resulting 90/95/99% quantiles agree closely with the
+# published Osterwald-Lenum (1992) tables for this case. The same draws give a p-value for
+# each observed statistic.
+
+# %%
+rng = np.random.default_rng(2025)
+sim_tr, sim_me = {}, {}
+for m in [1, 2, 3]:
+    draws = np.array([johansen_rr(np.cumsum(rng.standard_normal((500, m)), axis=0), 0, "rc")[1:]
+                      for _ in range(20_000)])
+    sim_tr[m], sim_me[m] = draws[:, 0, 0], draws[:, 1, 0]
+cv_tab = pd.DataFrame({"n - r": [1, 2, 3],
+                       **{f"trace {q:.0%}": [np.quantile(sim_tr[m], q) for m in [1, 2, 3]] for q in [0.90, 0.95, 0.99]},
+                       **{f"max-eig {q:.0%}": [np.quantile(sim_me[m], q) for m in [1, 2, 3]] for q in [0.90, 0.95, 0.99]}})
+savetab(cv_tab, "p5c_cv_sim", floatfmt=".2f", index=False)
+cv_tab
+
+# %% [markdown]
+# *Test results.* We read each test sequentially (r = 0, then r ≤ 1, ...) and stop at the
+# first null hypothesis not rejected at 5%.
+
+# %%
+def johansen_rc_table(k):
+    lam, tr, me = johansen_rr(d5, k, "rc")
     rows = []
     for i in range(3):
-        rows.append({"H0": f"r = {i}" if i == 0 else f"r ≤ {i}", "eigenvalue": jo.eig[i],
-                     "trace stat": jo.lr1[i], "trace 90%": jo.cvt[i, 0], "trace 95%": jo.cvt[i, 1], "trace 99%": jo.cvt[i, 2],
-                     "max-eig stat": jo.lr2[i], "max-eig 90%": jo.cvm[i, 0], "max-eig 95%": jo.cvm[i, 1], "max-eig 99%": jo.cvm[i, 2]})
+        m = 3 - i
+        rows.append({"H0": "r = 0" if i == 0 else f"r ≤ {i}", "eigenvalue": lam[i],
+                     "trace stat": tr[i], "trace 95%": np.quantile(sim_tr[m], 0.95),
+                     "trace p": (sim_tr[m] >= tr[i]).mean(),
+                     "max-eig stat": me[i], "max-eig 95%": np.quantile(sim_me[m], 0.95),
+                     "max-eig p": (sim_me[m] >= me[i]).mean()})
     tab = pd.DataFrame(rows)
-    r_tr = next((i for i in range(3) if jo.lr1[i] < jo.cvt[i, 1]), 3)
-    r_me = next((i for i in range(3) if jo.lr2[i] < jo.cvm[i, 1]), 3)
-    return jo, tab, r_tr, r_me
+    r_tr = next((i for i in range(3) if tab["trace p"][i] > 0.05), 3)
+    r_me = next((i for i in range(3) if tab["max-eig p"][i] > 0.05), 3)
+    return tab, r_tr, r_me
 
-jo, jtab, r_trace, r_maxeig = johansen_table(0, k_diff)
+jtab, r_trace, r_maxeig = johansen_rc_table(k_diff)
 savetab(jtab, "p5c_johansen", floatfmt=".3f", index=False)
-savetab(jtab[["H0", "eigenvalue", "trace stat", "trace 90%", "trace 95%", "trace 99%"]], "p5c_johansen_trace", floatfmt=".3f", index=False)
-savetab(jtab[["H0", "eigenvalue", "max-eig stat", "max-eig 90%", "max-eig 95%", "max-eig 99%"]], "p5c_johansen_maxeig", floatfmt=".3f", index=False)
-RESULTS.update({"p5_r_trace": r_trace, "p5_r_maxeig": r_maxeig})
-print("Rank at 5% — trace:", r_trace, " max-eig:", r_maxeig)
+RESULTS.update({"p5_r_trace": r_trace, "p5_r_maxeig": r_maxeig,
+                "p5_trace_r2": float(jtab["trace stat"][2]), "p5_trace_r2_p": float(jtab["trace p"][2])})
+print("Rank at 5% (restricted constant) — trace:", r_trace, " max-eig:", r_maxeig)
 jtab
 
+# %% [markdown]
+# *Robustness.* The same test with more lagged differences, and statsmodels' two
+# alternative deterministic specifications (with its built-in critical values).
+
 # %%
-# Robustness: does the rank depend on the number of lagged differences?
 rows = []
-for k in sorted(set([1, 2, 3, 4, k_diff])):
-    _, _, rt, rm = johansen_table(0, k)
-    rows.append({"k_ar_diff": k, "rank (trace, 5%)": rt, "rank (max-eig, 5%)": rm})
+for k in sorted(set([0, 1, 2, 3, 4, k_diff])):
+    _, rt, rm = johansen_rc_table(k)
+    rows.append({"deterministic terms": "restricted constant", "k_ar_diff": k,
+                 "rank (trace, 5%)": rt, "rank (max-eig, 5%)": rm})
+sm_rows = []
+for det, lab in [(-1, "none (statsmodels det_order=-1)"), (0, "unrestricted constant (statsmodels det_order=0)")]:
+    for kk in sorted(set([k_diff, k_diff + 1])):
+        jo_ = coint_johansen(d5, det, kk)
+        rt = next((i for i in range(3) if jo_.lr1[i] < jo_.cvt[i, 1]), 3)
+        rm = next((i for i in range(3) if jo_.lr2[i] < jo_.cvm[i, 1]), 3)
+        rows.append({"deterministic terms": lab, "k_ar_diff": kk, "rank (trace, 5%)": rt, "rank (max-eig, 5%)": rm})
+        if kk == k_diff:
+            for i in range(3):
+                sm_rows.append({"deterministic terms": lab.split(" (")[0], "H0": "r = 0" if i == 0 else f"r ≤ {i}",
+                                "trace stat": jo_.lr1[i], "trace 95%": jo_.cvt[i, 1], "trace 99%": jo_.cvt[i, 2],
+                                "max-eig stat": jo_.lr2[i], "max-eig 95%": jo_.cvm[i, 1], "max-eig 99%": jo_.cvm[i, 2]})
+        if det == 0 and kk == k_diff + 1:
+            RESULTS.update({"p5_uc_k1_r2_stat": float(jo_.lr1[2]), "p5_uc_k1_r2_cv95": float(jo_.cvt[2, 1]),
+                            "p5_uc_k1_r2_cv99": float(jo_.cvt[2, 2])})
 jrob = pd.DataFrame(rows)
+jsm = pd.DataFrame(sm_rows)
 savetab(jrob, "p5c_johansen_robust", index=False)
-jrob
+savetab(jsm, "p5c_johansen_sm", floatfmt=".3f", index=False)
+jo_uc = coint_johansen(d5, 0, k_diff)
+RESULTS.update({"p5_uc_r2_stat": float(jo_uc.lr1[2]), "p5_uc_r2_cv95": float(jo_uc.cvt[2, 1]),
+                "p5_uc_r2_cv99": float(jo_uc.cvt[2, 2])})
+display(jrob); display(jsm)
 
 # %% [markdown]
 # **Step 5: VECM.** Estimated with the rank found above, the same lag length, and the
@@ -792,7 +915,7 @@ jrob
 # identity.
 
 # %%
-r_use = r_trace if r_trace in (1, 2) else max(min(r_trace, 2), 1)
+r_use = r_trace
 RESULTS["p5_r_use"] = int(r_use)
 vecm = VECM(d5, k_ar_diff=k_diff, coint_rank=r_use, deterministic="ci").fit()
 print(vecm.summary())
@@ -800,24 +923,56 @@ print(vecm.summary())
 # %%
 names = ["X", "Y", "Z"]
 beta_tab = pd.DataFrame(vecm.beta, index=names, columns=[f"coint. vector {i+1}" for i in range(r_use)])
+beta_se = pd.DataFrame(vecm.stderr_beta, index=names, columns=beta_tab.columns)
 if vecm.det_coef_coint.size:
     beta_tab.loc["const"] = vecm.det_coef_coint.ravel()[:r_use]
+    beta_se.loc["const"] = vecm.stderr_det_coef_coint.ravel()[:r_use]
+beta_out = pd.concat({"estimate": beta_tab, "std err": beta_se}, axis=1)
+beta_out.columns = [f"{b}: {a}" for a, b in beta_out.columns]
+beta_out = beta_out[[c for v in beta_tab.columns for c in beta_out.columns if c.startswith(v)]]
+beta_out = beta_out.astype(float).where(beta_out.abs() > 1e-10, 0.0)
 alpha_tab = pd.DataFrame(vecm.alpha, index=[f"Δ{c}" for c in names], columns=[f"ECT {i+1}" for i in range(r_use)])
 alpha_se = pd.DataFrame(vecm.stderr_alpha, index=alpha_tab.index, columns=alpha_tab.columns)
 alpha_t = alpha_tab / alpha_se
 alpha_out = pd.concat({"alpha": alpha_tab, "std err": alpha_se, "t": alpha_t}, axis=1)
 alpha_out.columns = [f"{a} ({b})" for a, b in alpha_out.columns]
-gamma_rows = {}
-for lag in range(k_diff):
-    G = vecm.gamma[:, lag * 3:(lag + 1) * 3]
-    for i, eq in enumerate(names):
-        gamma_rows[(f"Δ{eq}", f"lag {lag+1}")] = G[i]
-gamma_tab = pd.DataFrame(gamma_rows, index=[f"coef. on Δ{c}" for c in names]).T
-gamma_tab.index = [f"{eq} eq., {l}" for eq, l in gamma_tab.index]
-savetab(beta_tab, "p5c_beta", floatfmt=".4f")
+gamma_tab = None
+if k_diff > 0:
+    gamma_rows = {}
+    for lag in range(k_diff):
+        G = vecm.gamma[:, lag * 3:(lag + 1) * 3]
+        for i, eq in enumerate(names):
+            gamma_rows[(f"Δ{eq}", f"lag {lag+1}")] = G[i]
+    gamma_tab = pd.DataFrame(gamma_rows, index=[f"coef. on Δ{c}" for c in names]).T
+    gamma_tab.index = [f"{eq} eq., {l}" for eq, l in gamma_tab.index]
+    savetab(gamma_tab, "p5c_gamma", floatfmt=".4f")
+savetab(beta_out, "p5c_beta", floatfmt=".4f")
 savetab(alpha_out, "p5c_alpha", floatfmt=".4f")
-savetab(gamma_tab, "p5c_gamma", floatfmt=".4f")
-display(beta_tab); display(alpha_out); display(gamma_tab)
+if r_use == 2:
+    t_theory = [(vecm.beta[2, 0] - 1.0) / vecm.stderr_beta[2, 0], (vecm.beta[2, 1] - 0.5) / vecm.stderr_beta[2, 1]]
+    RESULTS.update({"p5_bz1": float(vecm.beta[2, 0]), "p5_bz1_se": float(vecm.stderr_beta[2, 0]),
+                    "p5_bz2": float(vecm.beta[2, 1]), "p5_bz2_se": float(vecm.stderr_beta[2, 1]),
+                    "p5_bz1_t": float(t_theory[0]), "p5_bz2_t": float(t_theory[1])})
+    print("t-stats against theory (Z coef = 1 and 0.5):", np.round(t_theory, 3))
+display(beta_out); display(alpha_out)
+if gamma_tab is not None: display(gamma_tab)
+
+# %%
+# Robustness of the cointegrating vectors to the number of lagged differences
+rows = []
+for k in [0, 1, 2]:
+    v_ = VECM(d5, k_ar_diff=k, coint_rank=r_use, deterministic="ci").fit()
+    wt_ = v_.test_whiteness(nlags=10)
+    rows.append({"k_ar_diff": k, "Z coef., vector 1": v_.beta[2, 0], "s.e. (1)": v_.stderr_beta[2, 0],
+                 "Z coef., vector 2": v_.beta[2, 1], "s.e. (2)": v_.stderr_beta[2, 1],
+                 "log-likelihood": v_.llf, "portmanteau p (10 lags)": wt_.pvalue})
+beta_rob = pd.DataFrame(rows)
+llf0 = beta_rob["log-likelihood"].iloc[0]
+beta_rob["LR vs k=0"] = 2 * (beta_rob["log-likelihood"] - llf0)
+beta_rob["LR p"] = [np.nan] + [stats.chi2.sf(lr, 9 * k) for lr, k in zip(beta_rob["LR vs k=0"][1:], beta_rob["k_ar_diff"][1:])]
+RESULTS.update({"p5_lr_k1": float(beta_rob["LR vs k=0"].iloc[1]), "p5_lr_k1_p": float(beta_rob["LR p"].iloc[1])})
+savetab(beta_rob, "p5c_beta_robust", floatfmt=".4f", index=False)
+beta_rob
 
 # %%
 # Theoretical cointegrating vectors in the same normalisation, for comparison

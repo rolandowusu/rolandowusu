@@ -1,0 +1,4 @@
+,statistic,p-value
+Jarque-Bera (normality),3.9201948014317423,0.14084470187814394
+Breusch-Pagan (heteroskedasticity),2.48197463786497,0.6478663960684485
+RESET (functional form),0.004572062264187297,0.9462341194047625

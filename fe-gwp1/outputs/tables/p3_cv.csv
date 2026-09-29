@@ -1,0 +1,9 @@
+selected by,model,k,10-fold CV MSE
+adj R2 best,x2 + x3 + x4 + x5,4,0.8537348466042566
+AIC best,x2 + x3 + x4 + x5,4,0.8537348466042566
+BIC best,x2 + x3 + x4 + x5,4,0.8537348466042566
+forward AIC,x4 + x3 + x2 + x5,4,0.8537348466042568
+backward BIC,x2 + x3 + x4 + x5,4,0.8537348466042566
+backward p-value,x2 + x3 + x4 + x5,4,0.8537348466042566
+full model,x1 + x2 + x3 + x4 + x5,5,0.8651701605536992
+best 3-predictor model,x2 + x3 + x4,3,0.8462733312391595

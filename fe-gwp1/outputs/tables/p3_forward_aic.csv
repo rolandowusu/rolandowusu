@@ -1,0 +1,7 @@
+step,action,model,AIC
+0,start (intercept only),(intercept only),357.2461314558532
+1,add x4,x4,325.0286874406411
+2,add x3,x4 + x3,296.4425102749883
+3,add x2,x4 + x3 + x2,264.2910537906871
+4,add x5,x4 + x3 + x2 + x5,260.61668419946966
+5,stop: best addition (x1) would give 262.593,x4 + x3 + x2 + x5,260.61668419946966

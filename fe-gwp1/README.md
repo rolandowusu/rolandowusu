@@ -16,12 +16,12 @@ Solutions to GWP1 (Problems 1–6): a written report (answers, derivations, tabl
 
 ## Status
 
-Problems 1, 2, 3b, 4, 5a, 5b and 6 are complete. **3a and 5c need the course data files**, which were not available when this was built:
+All six problems are complete and the notebook runs end to end on the course data in `data/`.
 
-- `data/FE-GWP1_model_selection_1.csv`
-- `data/FE-GWP1_dataset_Prob5.csv`
+Two notes on the data work:
 
-The code for both is written and was tested end to end on stand-in data (not committed). Until the real files are added, those two sections of the report show a "results pending" note. The `[[P3_...]]` / `[[P5_...]]` markers in the template are where the written interpretation of those results goes once the real output exists; the build refuses to run while any are left.
+- `FE-GWP1_dataset_Prob5.csv` wraps every row in one pair of quotes and starts with a byte-order mark; the notebook strips these before parsing.
+- For the Johansen test in 5c the notebook implements the restricted-constant case itself (statsmodels does not offer it), checks the code against statsmodels on the cases it does offer, and simulates the critical values.
 
 ## Build
 
