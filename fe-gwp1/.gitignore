@@ -1,0 +1,4 @@
+dist/GWP1_Report.html
+dist/*.print.html
+dist/GWP1_code/
+.ipynb_checkpoints/
