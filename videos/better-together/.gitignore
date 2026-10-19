@@ -1,0 +1,6 @@
+.hyperframes/
+node_modules/
+# Personal photo and the video made from it: kept out of git until the owner says otherwise.
+assets/photo.jpg
+assets/photo-graded.jpg
+renders/

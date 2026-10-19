@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1080, height=1920">
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: #1a0c10;
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #1a0c10;
+      }
+      .scene {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+      #bokeh {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      /* Every photo layer places the whole selfie at its "union" position (scale 1.1, centered);
+         the halves are carved out of it with a clip along the seam between the two of them. */
+      .layer {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+      }
+      .layer img {
+        position: absolute;
+        left: -256.4px;
+        top: 362.7px;
+        width: 1592.8px;
+        height: 1194.6px;
+        display: block;
+      }
+      #half-him {
+        clip-path: polygon(-3000px -3000px, 533.9px -3000px, 617.6px 4000px, -3000px 4000px);
+        transform-origin: 387.1px 714.7px;
+      }
+      #half-her {
+        clip-path: polygon(533.9px -3000px, 4000px -3000px, 4000px 4000px, 617.6px 4000px);
+        transform-origin: 783.1px 956.7px;
+      }
+      #union {
+        transform-origin: 585px 840px;
+      }
+      /* Feathers: the photo dissolves into the dark background around each face.
+         They are children of each layer, so they move and clip with it. */
+      .feather {
+        position: absolute;
+        left: -262.4px;
+        top: 356.7px;
+        width: 1604.8px;
+        height: 1206.6px;
+      }
+      #half-him .feather {
+        background:
+          linear-gradient(to right, rgba(26, 12, 16, 0) 790px, #1a0c10 840px),
+          radial-gradient(ellipse 470px 470px at 643px 418px, rgba(26, 12, 16, 0) 38%, #1a0c10 88%);
+      }
+      #half-her .feather {
+        background:
+          linear-gradient(to left, rgba(26, 12, 16, 0) 718px, #1a0c10 763px),
+          radial-gradient(ellipse 500px 500px at 1039px 628px, rgba(26, 12, 16, 0) 38%, #1a0c10 88%);
+      }
+      #union .feather {
+        background: linear-gradient(to bottom, #1a0c10 0px, rgba(26, 12, 16, 0) 170px, rgba(26, 12, 16, 0) 1020px, #1a0c10 1194px);
+      }
+      #seam {
+        position: absolute;
+        left: 578px;
+        top: 300px;
+        width: 8px;
+        height: 1320px;
+        border-radius: 4px;
+        background: linear-gradient(to bottom, rgba(255, 214, 170, 0), rgba(255, 228, 196, 0.95) 30%, rgba(255, 228, 196, 0.95) 70%, rgba(255, 214, 170, 0));
+        box-shadow: 0 0 40px 16px rgba(255, 170, 130, 0.45);
+        transform: rotate(-0.69deg);
+        opacity: 0;
+      }
+      #bloom {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        background: radial-gradient(ellipse 620px 760px at 581px 900px, rgba(255, 186, 140, 0.5), rgba(255, 150, 120, 0.12) 55%, rgba(255, 150, 120, 0) 75%);
+        mix-blend-mode: screen;
+        opacity: 0;
+      }
+      #flash {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        background: radial-gradient(ellipse 700px 900px at 581px 960px, rgba(255, 244, 228, 1), rgba(255, 210, 180, 0.6) 45%, rgba(255, 190, 160, 0) 80%);
+        opacity: 0;
+      }
+      .scrim {
+        position: absolute;
+        left: 0;
+        width: 100%;
+        height: 520px;
+      }
+      #scrim-top {
+        top: 0;
+        background: linear-gradient(to bottom, rgba(26, 12, 16, 0.92), rgba(26, 12, 16, 0));
+      }
+      #scrim-bottom {
+        bottom: 0;
+        background: linear-gradient(to top, rgba(26, 12, 16, 0.94), rgba(26, 12, 16, 0));
+      }
+      .line {
+        position: absolute;
+        left: 90px;
+        width: 900px;
+        font-family: "EB Garamond", serif;
+        font-style: italic;
+        font-weight: 400;
+        font-size: 68px;
+        line-height: 1.16;
+        letter-spacing: -0.01em;
+        text-align: center;
+        color: #f8ece0;
+        text-shadow: 0 3px 26px rgba(10, 4, 6, 0.95);
+        opacity: 0;
+      }
+      #l-open {
+        top: 880px;
+      }
+      #l-him,
+      #l-her {
+        top: 1590px;
+      }
+      #l-found,
+      #l-sense {
+        top: 170px;
+      }
+      #l-final {
+        top: 1590px;
+        font-size: 112px;
+        line-height: 1;
+      }
+      #heart {
+        position: absolute;
+        left: 495px;
+        top: 1740px;
+        width: 90px;
+        height: 90px;
+        display: block;
+        overflow: visible;
+      }
+      #heart path {
+        fill: none;
+        stroke: #f2a58e;
+        stroke-width: 4;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      #black {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        background: #000;
+        opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div data-hf-id="hf-coex" id="root" data-composition-id="main" data-start="0" data-duration="30" data-width="1080" data-height="1920">
+      <div data-hf-id="hf-6hza" id="film" class="scene">
+        <div data-hf-id="hf-oyhv" id="half-him" class="layer" data-layout-allow-overflow><img data-hf-id="hf-rz0i" class="photo" src="assets/photo-graded.jpg" alt=""><div data-hf-id="hf-gzp1" class="feather"></div></div>
+        <div data-hf-id="hf-0tqg" id="half-her" class="layer" data-layout-allow-overflow><img data-hf-id="hf-5zza" class="photo" src="assets/photo-graded.jpg" alt=""><div data-hf-id="hf-6ga1" class="feather"></div></div>
+        <div data-hf-id="hf-31ry" id="union" class="layer" data-layout-allow-overflow><img data-hf-id="hf-6eab" class="photo" src="assets/photo-graded.jpg" alt=""><div data-hf-id="hf-7n74" class="feather"></div></div>
+        <canvas data-hf-id="hf-80os" id="bokeh" width="1080" height="1920" data-layout-allow-overflow=""></canvas>
+        <div data-hf-id="hf-f66z" id="seam"></div>
+        <div data-hf-id="hf-36zu" id="bloom"></div>
+        <div data-hf-id="hf-hmg5" id="flash"></div>
+        <div data-hf-id="hf-g5fk" id="scrim-top" class="scrim"></div>
+        <div data-hf-id="hf-1zj6" id="scrim-bottom" class="scrim"></div>
+        <p data-hf-id="hf-g4hv" id="l-open" class="line">Once, there were two halves…</p>
+        <p data-hf-id="hf-i757" id="l-him" class="line">one with a smile that could warm any room…</p>
+        <p data-hf-id="hf-0p41" id="l-her" class="line">one with a look that says more than words…</p>
+        <p data-hf-id="hf-v9qk" id="l-found" class="line">and when they found each other,</p>
+        <p data-hf-id="hf-gbpu" id="l-sense" class="line">everything made sense.</p>
+        <p data-hf-id="hf-ks9c" id="l-final" class="line">Better together.</p>
+        <svg data-hf-id="hf-lsic" id="heart" viewBox="0 0 100 100" data-layout-allow-overflow="">
+          <path data-hf-id="hf-7tlz" pathLength="1" d="M50 86 C 22 66, 4 48, 13 28 C 21 11, 43 11, 50 29 C 57 11, 79 11, 87 28 C 96 48, 78 66, 50 86 Z" />
+        </svg>
+        <div data-hf-id="hf-t94y" id="black"></div>
+      </div>
+
+      <audio data-hf-id="hf-zisc" id="el-music" src="assets/music.wav" data-start="0" data-duration="30" data-track-index="10" data-volume="0.9"></audio>
+    </div>
+
+    <script>
+      (function () {
+        const W = 1080;
+        const H = 1920;
+        const D = 30;
+        const MEET = 19.5; // the halves lock together on a bar downbeat of the music
+
+        // Deterministic warm bokeh drifting upward; brighter once the two are one.
+        function rng(seed) {
+          let a = seed >>> 0;
+          return function () {
+            a = (a + 0x6d2b79f5) >>> 0;
+            let t = a;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+          };
+        }
+        const r = rng(214);
+        const dots = [];
+        for (let i = 0; i < 46; i++) {
+          dots.push({
+            x: r() * W,
+            y: r() * H,
+            rad: 14 + Math.pow(r(), 2) * 70,
+            sp: 12 + r() * 30,
+            sway: 10 + r() * 30,
+            ph: r() * 6.28,
+            a: 0.04 + r() * 0.12,
+            warm: r(),
+          });
+        }
+        const canvas = document.getElementById("bokeh");
+        const ctx = canvas.getContext("2d");
+        const smooth = (a, b, v) => {
+          const t = Math.min(1, Math.max(0, (v - a) / (b - a)));
+          return t * t * (3 - 2 * t);
+        };
+        function drawBokeh(t) {
+          ctx.clearRect(0, 0, W, H);
+          const k = (0.55 + 0.45 * smooth(0, 2.5, t)) * (1 + 0.6 * smooth(MEET, MEET + 3, t));
+          ctx.globalCompositeOperation = "lighter";
+          for (const d of dots) {
+            const y = ((d.y - t * d.sp) % (H + 200) + H + 200) % (H + 200) - 100;
+            const x = d.x + Math.sin(t * 0.4 + d.ph) * d.sway;
+            const col = d.warm < 0.5 ? "255, 168, 150" : "255, 206, 150";
+            const g = ctx.createRadialGradient(x, y, 0, x, y, d.rad);
+            g.addColorStop(0, `rgba(${col}, ${d.a * k})`);
+            g.addColorStop(0.7, `rgba(${col}, ${d.a * k * 0.55})`);
+            g.addColorStop(1, `rgba(${col}, 0)`);
+            ctx.fillStyle = g;
+            ctx.fillRect(x - d.rad, y - d.rad, d.rad * 2, d.rad * 2);
+          }
+          ctx.globalCompositeOperation = "source-over";
+        }
+
+        const tl = gsap.timeline({ paused: true });
+        const proxy = { t: 0 };
+        drawBokeh(0);
+        tl.to(proxy, { t: D, duration: D, ease: "none", onUpdate: () => drawBokeh(proxy.t) }, 0);
+
+        const lineIn = (sel, at, dur) => tl.fromTo(sel, { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: dur || 1.1, ease: "power2.out" }, at);
+        const lineOut = (sel, at) => tl.to(sel, { opacity: 0, y: -10, duration: 0.6, ease: "power1.in" }, at);
+
+        // 1 — Once, there were two halves…
+        lineIn("#l-open", 0.5, 1.2);
+        lineOut("#l-open", 2.6);
+
+        // 2 — his half, alone, slow push in
+        tl.fromTo("#half-him", { opacity: 0, scale: 1.45, x: 152.9, y: 145.3 }, { opacity: 1, duration: 1.3, ease: "power1.out" }, 3.0);
+        tl.to("#half-him", { scale: 1.62, duration: 6.9, ease: "sine.inOut" }, 3.0);
+        tl.to("#half-him", { opacity: 0, duration: 0.8, ease: "power1.in" }, 9.3);
+        lineIn("#l-him", 4.4);
+        lineOut("#l-him", 8.9);
+
+        // 3 — her half, alone, a slow pull back
+        tl.fromTo("#half-her", { opacity: 0, scale: 1.62, x: -243.1, y: -96.7 }, { opacity: 1, duration: 1.3, ease: "power1.out" }, 9.6);
+        tl.to("#half-her", { scale: 1.48, duration: 6.3, ease: "sine.inOut" }, 9.6);
+        lineIn("#l-her", 11.0);
+        lineOut("#l-her", 15.2);
+
+        // 4 — the camera pulls back: two halves, a gap of light between them
+        tl.to("#half-her", { scale: 1, x: 150, y: 0, duration: 1.8, ease: "power2.inOut" }, 15.9);
+        tl.set("#half-him", { scale: 1, x: -150, y: 0 }, 15.0);
+        tl.to("#half-him", { opacity: 1, duration: 1.2, ease: "power1.out" }, 16.6);
+        tl.to("#seam", { opacity: 0.55, duration: 1.6, ease: "sine.inOut" }, 16.8);
+        lineIn("#l-found", 16.8);
+        lineOut("#l-found", 19.0);
+        tl.to("#half-him", { x: 0, duration: 1.8, ease: "power3.inOut" }, MEET - 1.8);
+        tl.to("#half-her", { x: 0, duration: 1.8, ease: "power3.inOut" }, MEET - 1.8);
+
+        // 5 — they lock together: a warm flash, and the picture is whole
+        tl.to("#seam", { opacity: 1, duration: 0.15, ease: "power2.in" }, MEET - 0.15);
+        tl.to("#flash", { opacity: 0.6, duration: 0.15, ease: "power2.in" }, MEET - 0.15);
+        tl.to("#union", { opacity: 1, duration: 0.2, ease: "none" }, MEET - 0.1);
+        tl.to("#seam", { opacity: 0, duration: 0.9, ease: "power2.out" }, MEET);
+        tl.to("#flash", { opacity: 0, duration: 1.4, ease: "power2.out" }, MEET);
+        tl.to(["#half-him", "#half-her"], { opacity: 0, duration: 0.3, ease: "none" }, MEET + 0.2);
+        tl.fromTo("#union", { scale: 1 }, { scale: 1.07, duration: D - MEET, ease: "sine.out" }, MEET);
+        tl.to("#bloom", { opacity: 0.55, duration: 2.5, ease: "sine.out" }, MEET);
+        tl.to("#bloom", { opacity: 0.35, duration: 2.5, ease: "sine.inOut", yoyo: true, repeat: 2 }, MEET + 2.5);
+        lineIn("#l-sense", 20.6);
+        lineOut("#l-sense", 24.0);
+        lineIn("#l-final", 24.8, 1.5);
+        tl.fromTo("#heart path", { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 1.6, ease: "power2.inOut" }, 25.7);
+        tl.to("#black", { opacity: 1, duration: 1.0, ease: "power1.in" }, 29.0);
+
+        window.__timelines["main"] = tl;
+      })();
+    </script>
+  </body>
+</html>
