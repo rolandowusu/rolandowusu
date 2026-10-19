@@ -1,0 +1,263 @@
+<template id="s4-crossing-template">
+  <div data-composition-id="s4-crossing" data-width="1920" data-height="1080" data-duration="7">
+    <div class="s4-stage">
+      <canvas class="s4-canvas" width="1920" height="1080" data-layout-allow-overflow></canvas>
+      <div class="s4-text">
+        <p class="s4-quote">“…and the waters were a wall unto them on their right hand, and on their left.”</p>
+        <div class="s4-ref">Exodus 14:22</div>
+      </div>
+    </div>
+
+    <style>
+      [data-composition-id="s4-crossing"] {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+      }
+      [data-composition-id="s4-crossing"] .s4-stage {
+        position: absolute;
+        inset: 0;
+        background: #06121a;
+      }
+      [data-composition-id="s4-crossing"] .s4-canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      [data-composition-id="s4-crossing"] .s4-text {
+        position: absolute;
+        left: 110px;
+        top: 120px;
+        width: 720px;
+      }
+      [data-composition-id="s4-crossing"] .s4-quote {
+        font-family: "EB Garamond", serif;
+        font-weight: 400;
+        font-size: 56px;
+        line-height: 1.14;
+        letter-spacing: -0.01em;
+        color: #f3e9d6;
+        text-shadow: 0 3px 24px rgba(0, 0, 0, 0.95);
+      }
+      [data-composition-id="s4-crossing"] .s4-ref {
+        margin-top: 24px;
+        font-family: "Oswald", sans-serif;
+        font-weight: 400;
+        font-size: 28px;
+        letter-spacing: 0.36em;
+        text-transform: uppercase;
+        color: #f2b264;
+        text-shadow: 0 2px 14px rgba(0, 0, 0, 0.9);
+      }
+    </style>
+
+    <script>
+      (function () {
+        const S = '[data-composition-id="s4-crossing"]';
+        const D = 7;
+        const { W, H, rng, noise, lerp, clamp, smooth, figure, grain, vignette, drive } = window.RS;
+        const canvas = document.querySelector(S + " .s4-canvas");
+        const ctx = canvas.getContext("2d");
+        const HZ = 540;
+        const VX = 960;
+        const F = 1000;
+        const EYE = 1.7;
+        const HW = 12; // corridor half-width
+        const WALL = 18; // wall height
+        const r = rng(4242);
+
+        const walkers = [];
+        for (let i = 0; i < 230; i++) {
+          const sheep = r() < 0.1;
+          walkers.push({
+            x: (r() - 0.5) * 2 * (HW - 2.5),
+            z: 3.5 + Math.pow(r(), 1.4) * 260,
+            sp: 1.1 + r() * 0.35,
+            phase: r() * 6.28,
+            sheep,
+            child: !sheep && r() < 0.18,
+            staff: !sheep && r() < 0.14,
+            bundle: !sheep && r() < 0.35,
+            hgt: sheep ? 0.75 : 1.55 + r() * 0.3,
+            lean: (r() - 0.5) * 0.2,
+          });
+        }
+        const fish = [];
+        for (let i = 0; i < 26; i++) fish.push({ side: r() < 0.5 ? -1 : 1, y: 2 + r() * 13, z: 6 + r() * 120, sp: (r() - 0.3) * 2, size: 0.5 + r() * 1.4, p: r() * 6 });
+        const stones = [];
+        for (let i = 0; i < 110; i++) stones.push({ x: (r() - 0.5) * 2 * HW, z: 2 + Math.pow(r(), 2) * 300, w: 0.05 + r() * 0.18 });
+
+        const project = (x, y, z) => [VX + (F * x) / z, HZ - (F * (y - EYE)) / z];
+        const poly = (pts) => {
+          ctx.beginPath();
+          pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+          ctx.closePath();
+        };
+
+        function sheepShape(x, y, h, ph) {
+          ctx.beginPath();
+          ctx.ellipse(x, y - h * 0.55, h * 0.7, h * 0.38, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.ellipse(x - h * 0.6, y - h * 0.7 + Math.sin(ph) * h * 0.04, h * 0.2, h * 0.16, -0.4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillRect(x - h * 0.45, y - h * 0.3, h * 0.1, h * 0.3);
+          ctx.fillRect(x + h * 0.3, y - h * 0.3, h * 0.1, h * 0.3);
+        }
+
+        function draw(t) {
+          // the camera follows a little slower than the walkers, so the crowd draws ahead
+          const camZ = 0.9 * t;
+          const sway = Math.sin(t * 2.6) * 2;
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, W, H);
+          ctx.save();
+          ctx.translate(0, sway);
+
+          // the sky wedge between the wall tops, lightening ahead
+          const sky = ctx.createLinearGradient(0, 0, 0, HZ);
+          sky.addColorStop(0, "#0a1226");
+          sky.addColorStop(1, "#7d7f99");
+          ctx.fillStyle = sky;
+          ctx.fillRect(0, -50, W, HZ + 50);
+
+          // the far light the procession walks toward
+          const glow = ctx.createRadialGradient(VX, HZ - 10, 0, VX, HZ - 10, 900);
+          glow.addColorStop(0, "rgba(255, 228, 175, 0.95)");
+          glow.addColorStop(0.08, "rgba(255, 200, 140, 0.55)");
+          glow.addColorStop(0.35, "rgba(200, 160, 150, 0.15)");
+          glow.addColorStop(1, "rgba(120, 120, 160, 0)");
+          ctx.fillStyle = glow;
+          ctx.fillRect(0, 0, W, H);
+
+          // seabed
+          const zs = [];
+          for (let i = 0; i <= 60; i++) zs.push(1.2 * Math.pow(600 / 1.2, i / 60));
+          poly(zs.map((z) => project(-HW, 0, z)).concat(zs.map((z) => project(HW, 0, z)).reverse()));
+          const bed = ctx.createLinearGradient(0, HZ, 0, H);
+          bed.addColorStop(0, "#75675a");
+          bed.addColorStop(0.1, "#3a3029");
+          bed.addColorStop(1, "#110d0a");
+          ctx.fillStyle = bed;
+          ctx.fill();
+          // sheen of the far light on the wet sand
+          ctx.save();
+          ctx.clip();
+          ctx.globalCompositeOperation = "lighter";
+          const sheen = ctx.createRadialGradient(VX, HZ, 0, VX, HZ, 520);
+          sheen.addColorStop(0, "rgba(255, 210, 150, 0.22)");
+          sheen.addColorStop(1, "rgba(255, 210, 150, 0)");
+          ctx.fillStyle = sheen;
+          ctx.fillRect(0, HZ, W, H - HZ);
+          ctx.restore();
+          for (const s of stones) {
+            const z = s.z - camZ;
+            if (z <= 1) continue;
+            const [sx, sy] = project(s.x, 0, z);
+            ctx.fillStyle = "rgba(12, 9, 7, 0.35)";
+            ctx.beginPath();
+            ctx.ellipse(sx, sy, (F * s.w) / z, (F * s.w * 0.35) / z, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          // the walls: banded from the seabed up to the moonlit lip
+          const stops = [[0, [3, 16, 22]], [0.45, [9, 52, 64]], [0.8, [28, 104, 120]], [0.94, [90, 175, 190]], [1, [200, 238, 242]]];
+          const colAt = (fr) => {
+            for (let k = 1; k < stops.length; k++) {
+              if (fr <= stops[k][0]) {
+                const [f0, c0] = stops[k - 1];
+                const [f1, c1] = stops[k];
+                const m = (fr - f0) / (f1 - f0);
+                return `rgb(${c0.map((c, j) => Math.round(lerp(c, c1[j], m))).join(",")})`;
+              }
+            }
+            return "rgb(200,238,242)";
+          };
+          for (const side of [-1, 1]) {
+            const BANDS = 30;
+            for (let k = 0; k < BANDS; k++) {
+              const y0 = (WALL * k) / BANDS;
+              const y1 = (WALL * (k + 1)) / BANDS + 0.03;
+              poly(zs.map((z) => project(side * HW, y0, z)).concat(zs.map((z) => project(side * HW, y1, z)).reverse()));
+              ctx.fillStyle = colAt((k + 0.5) / BANDS);
+              ctx.fill();
+            }
+            // fish drifting inside the wall
+            for (const f of fish) {
+              if (f.side !== side) continue;
+              const z = f.z + f.sp * t - camZ * 0.2;
+              if (z <= 2) continue;
+              const [fx, fy] = project(side * (HW + 0.2), f.y + Math.sin(t + f.p) * 0.3, z);
+              const len = (F * f.size) / z;
+              ctx.fillStyle = "rgba(2, 12, 16, 0.55)";
+              ctx.beginPath();
+              ctx.ellipse(fx, fy, len * 0.5, len * 0.16, side * 0.1, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.beginPath();
+              ctx.moveTo(fx - side * len * 0.45, fy);
+              ctx.lineTo(fx - side * len * 0.75, fy - len * 0.16);
+              ctx.lineTo(fx - side * len * 0.75, fy + len * 0.16);
+              ctx.closePath();
+              ctx.fill();
+            }
+            // currents and caustics moving in the water
+            ctx.save();
+            ctx.globalCompositeOperation = "lighter";
+            for (let k = 0; k < 16; k++) {
+              const yy = ((k * 1.13 + t * 0.35) % 1) * WALL;
+              ctx.strokeStyle = `rgba(150, 225, 235, ${0.03 + 0.09 * (yy / WALL)})`;
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              zs.forEach((z, i) => {
+                const [x, y] = project(side * HW, yy + (noise(i * 0.4 + k * 7 + t * 1.3) - 0.5) * 1.2, z);
+                i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+              });
+              ctx.stroke();
+            }
+            ctx.restore();
+          }
+
+          // the procession, far → near
+          const live = walkers
+            .map((p) => ({ p, z: p.z + p.sp * t - camZ }))
+            .filter((o) => o.z > 1.4)
+            .sort((a, b) => b.z - a.z);
+          for (const { p, z } of live) {
+            const [sx, sy] = project(p.x, 0, z);
+            const h = (F * p.hgt) / z;
+            const ph = p.phase + t * p.sp * 5;
+            const fade = 1;
+            const haze = clamp((z - 30) / 220, 0, 0.75);
+            const c = Math.round(lerp(6, 120, haze));
+            const dark = `rgba(${c}, ${Math.round(c * 0.95)}, ${Math.round(c * 1.05)}, ${fade})`;
+            const rim = `rgba(255, 205, 150, ${0.5 * fade * (1 - haze)})`;
+            if (p.sheep) {
+              ctx.fillStyle = rim;
+              sheepShape(sx, sy - h * 0.03, h, ph);
+              ctx.fillStyle = dark;
+              sheepShape(sx, sy, h, ph);
+            } else {
+              const o = { phase: ph, walk: 1, child: p.child, staff: p.staff, bundle: p.bundle, lean: p.lean };
+              figure(ctx, sx, sy - h * 0.012, h, Object.assign({ fill: rim }, o));
+              figure(ctx, sx, sy, h, Object.assign({ fill: dark }, o));
+            }
+          }
+          ctx.restore();
+
+          vignette(ctx, 0.7);
+          grain(ctx, t, 0.06);
+        }
+
+        const tl = gsap.timeline({ paused: true });
+        drive(tl, D, draw);
+        tl.fromTo(S + " .s4-stage", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "none" }, 0);
+        tl.fromTo(S + " .s4-quote", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 1.0, ease: "power3.out" }, 1.4);
+        tl.fromTo(S + " .s4-ref", { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.7, ease: "power2.out" }, 1.9);
+        tl.to(S + " .s4-text", { opacity: 0, duration: 0.5, ease: "power1.in" }, 6.3);
+        window.__timelines["s4-crossing"] = tl;
+      })();
+    </script>
+  </div>
+</template>

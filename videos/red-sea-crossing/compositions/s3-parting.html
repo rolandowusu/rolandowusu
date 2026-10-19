@@ -1,0 +1,312 @@
+<template id="s3-parting-template">
+  <div data-composition-id="s3-parting" data-width="1920" data-height="1080" data-duration="7.5">
+    <div class="s3-stage">
+      <canvas class="s3-canvas" width="1920" height="1080" data-layout-allow-overflow></canvas>
+      <div class="s3-text">
+        <p class="s3-quote">“…and the waters were divided.”</p>
+        <div class="s3-ref">Exodus 14:21</div>
+      </div>
+    </div>
+
+    <style>
+      [data-composition-id="s3-parting"] {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+      }
+      [data-composition-id="s3-parting"] .s3-stage {
+        position: absolute;
+        inset: 0;
+        background: #070b16;
+      }
+      [data-composition-id="s3-parting"] .s3-canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      [data-composition-id="s3-parting"] .s3-text {
+        position: absolute;
+        left: 110px;
+        top: 110px;
+        width: 900px;
+      }
+      [data-composition-id="s3-parting"] .s3-quote {
+        font-family: "EB Garamond", serif;
+        font-weight: 400;
+        font-size: 64px;
+        line-height: 1.12;
+        letter-spacing: -0.01em;
+        color: #f3e9d6;
+        text-shadow: 0 3px 24px rgba(0, 0, 0, 0.95);
+      }
+      [data-composition-id="s3-parting"] .s3-ref {
+        margin-top: 22px;
+        font-family: "Oswald", sans-serif;
+        font-weight: 400;
+        font-size: 28px;
+        letter-spacing: 0.36em;
+        text-transform: uppercase;
+        color: #f2b264;
+        text-shadow: 0 2px 14px rgba(0, 0, 0, 0.9);
+      }
+    </style>
+
+    <script>
+      (function () {
+        const S = '[data-composition-id="s3-parting"]';
+        const D = 7.5;
+        const { W, H, rng, noise, lerp, clamp, smooth, easeOut, stars, drawStars, grain, vignette, cloud, drive } = window.RS;
+        const canvas = document.querySelector(S + " .s3-canvas");
+        const ctx = canvas.getContext("2d");
+        const HZ = 430;
+        const VX = 960;
+        const F = 1000; // focal length in px
+        const CAM_Y = 12; // camera height above sea level
+        const N = 90;
+        const sky = stars(303, 200);
+        const r = rng(404);
+        const spray = [];
+        for (let i = 0; i < 300; i++) spray.push({ u: r(), side: r() < 0.5 ? -1 : 1, off: r(), sp: 0.5 + r() * 0.9, dx: r() * 3, s: 0.6 + r() * 1.6 });
+
+        // Depth samples, near → far, log-spaced.
+        const Z0 = 16;
+        const Z1 = 4000;
+        const zAt = (u) => Z0 * Math.pow(Z1 / Z0, u);
+        // The parting starts at the near shore and races out to the horizon.
+        // Delay follows screen distance so the opening visibly races to the horizon.
+        const openAt = (u, t) => easeOut((t - 1.2 - 3.2 * (1 - Z0 / zAt(u))) / 1.9);
+        const project = (x, y, z) => [VX + (F * x) / z, HZ - (F * (y - CAM_Y)) / z];
+
+        function draw(t) {
+          const rumble = smooth(1.2, 1.8, t) * (1 - smooth(4.5, 6.5, t));
+          const camZ = 6 * smooth(0, D, t);
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, W, H);
+          ctx.save();
+          ctx.translate(Math.sin(t * 47) * rumble * 4, Math.cos(t * 41) * rumble * 4);
+
+          // night sky
+          const g = ctx.createLinearGradient(0, -100, 0, HZ);
+          g.addColorStop(0, "#050813");
+          g.addColorStop(0.7, "#121c34");
+          g.addColorStop(1, "#2a3654");
+          ctx.fillStyle = g;
+          ctx.fillRect(-100, -100, W + 200, HZ + 100);
+          drawStars(ctx, sky, t, 0.7);
+          for (let i = 0; i < 6; i++) {
+            const x = ((i * 610 - t * (40 + i * 10)) % 2800 + 2800) % 2800 - 500;
+            cloud(ctx, x, 60 + i * 50, 800, 60, i % 2 ? "rgba(6, 9, 20, 0.7)" : "rgba(50, 62, 95, 0.35)", 200 + i);
+          }
+          const hzGlow = ctx.createRadialGradient(VX, HZ, 0, VX, HZ, 760);
+          hzGlow.addColorStop(0, `rgba(160, 185, 235, ${0.22 + 0.25 * smooth(2.5, 6, t)})`);
+          hzGlow.addColorStop(1, "rgba(160, 185, 235, 0)");
+          ctx.fillStyle = hzGlow;
+          ctx.fillRect(VX - 760, HZ - 760, 1520, 1520);
+
+          // open sea, moonlit
+          const sea = ctx.createLinearGradient(0, HZ, 0, H);
+          sea.addColorStop(0, "#2c4560");
+          sea.addColorStop(1, "#06111d");
+          ctx.fillStyle = sea;
+          ctx.fillRect(-100, HZ, W + 200, H - HZ + 100);
+          for (let i = 0; i < 26; i++) {
+            const z = zAt(i / 26) - camZ;
+            if (z <= 1) continue;
+            const y = project(0, 0, z)[1];
+            const v = clamp((y - HZ) / (H - HZ), 0, 1);
+            ctx.strokeStyle = `rgba(190, 215, 240, ${0.05 + 0.16 * v})`;
+            ctx.lineWidth = 1 + v * 2;
+            ctx.beginPath();
+            for (let x = -100; x <= W + 100; x += 24) {
+              const yy = y + Math.sin(x * 0.01 / (0.25 + v) + t * 2.2 + i * 1.7) * (1.5 + v * 9);
+              x === -100 ? ctx.moveTo(x, yy) : ctx.lineTo(x, yy);
+            }
+            ctx.stroke();
+          }
+
+          // the seam of light, before the waters move
+          const seam = smooth(0.4, 1.1, t) * (1 - smooth(2.4, 3.8, t));
+          if (seam > 0) {
+            ctx.save();
+            ctx.globalCompositeOperation = "lighter";
+            for (const [wd, al] of [[1.6, 0.18], [0.9, 0.3], [0.45, 0.5]]) {
+              ctx.fillStyle = `rgba(255, 225, 170, ${al * seam})`;
+              const [nl] = project(-wd, 0, Z0 - camZ + 2);
+              const [nr] = project(wd, 0, Z0 - camZ + 2);
+              ctx.beginPath();
+              ctx.moveTo(VX, HZ + 6);
+              ctx.lineTo(nl, H + 80);
+              ctx.lineTo(nr, H + 80);
+              ctx.closePath();
+              ctx.fill();
+            }
+            ctx.restore();
+          }
+
+          // build the trench cross-sections, near → far
+          const rows = [];
+          for (let i = 0; i <= N; i++) {
+            const u = i / N;
+            const z = zAt(u) - camZ;
+            if (z <= 2) continue;
+            const o = openAt(u, t);
+            const hw = o * 15;
+            const floor = -9 * o;
+            const top = 4.5 * o;
+            const L = { fl: project(-hw, floor, z), tp: project(-hw, top, z), out: project(-hw - 22 * o, 0, z) };
+            const R = { fl: project(hw, floor, z), tp: project(hw, top, z), out: project(hw + 22 * o, 0, z) };
+            rows.push({ u, z, o, L, R });
+          }
+          const poly = (pts) => {
+            ctx.beginPath();
+            pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+            ctx.closePath();
+          };
+
+          // the swell of water heaped beside the walls
+          for (const side of ["L", "R"]) {
+            const top = rows.map((rw) => rw[side].tp);
+            const out = rows.map((rw) => rw[side].out).reverse();
+            poly(top.concat(out));
+            const sw = ctx.createLinearGradient(0, HZ, 0, H);
+            sw.addColorStop(0, "#4c6c86");
+            sw.addColorStop(1, "#16324a");
+            ctx.fillStyle = sw;
+            ctx.fill();
+          }
+
+          // the dry seabed
+          poly(rows.map((rw) => rw.L.fl).concat(rows.map((rw) => rw.R.fl).reverse()));
+          const bed = ctx.createLinearGradient(0, HZ, 0, H);
+          bed.addColorStop(0, "#5c5866");
+          bed.addColorStop(0.25, "#3a332c");
+          bed.addColorStop(1, "#1c1713");
+          ctx.fillStyle = bed;
+          ctx.fill();
+          ctx.save();
+          ctx.clip();
+          const warm = ctx.createRadialGradient(VX, H + 260, 50, VX, H + 260, 1000);
+          warm.addColorStop(0, "rgba(255, 150, 70, 0.45)");
+          warm.addColorStop(1, "rgba(255, 150, 70, 0)");
+          ctx.fillStyle = warm;
+          ctx.fillRect(0, HZ, W, H - HZ);
+          // wind-combed sand ripples and scattered stones
+          const rr = rng(808);
+          ctx.lineWidth = 2;
+          for (let k = 0; k < 70; k++) {
+            const z = 18 + Math.pow(rr(), 2.2) * 600 - camZ;
+            const x0 = (rr() - 0.5) * 30;
+            const len = 2 + rr() * 6;
+            if (z <= 2) continue;
+            ctx.strokeStyle = `rgba(255, 215, 160, ${0.07 + rr() * 0.08})`;
+            ctx.beginPath();
+            for (let x = x0; x <= x0 + len; x += 0.25) {
+              const [sx, sy] = project(x, -9, z + Math.sin(x * 1.3 + k) * 0.6);
+              x === x0 ? ctx.moveTo(sx, sy) : ctx.lineTo(sx, sy);
+            }
+            ctx.stroke();
+          }
+          for (let k = 0; k < 90; k++) {
+            const z = 18 + Math.pow(rr(), 2) * 500 - camZ;
+            const x = (rr() - 0.5) * 26;
+            if (z <= 2) continue;
+            const [sx, sy] = project(x, -9, z);
+            ctx.fillStyle = "rgba(10, 8, 6, 0.55)";
+            ctx.beginPath();
+            ctx.ellipse(sx, sy, (rr() * 30 + 10) * 6 / z, (rr() * 10 + 4) * 6 / z, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+
+          // the inner faces of the walls: a cross-section of the sea
+          for (const side of ["L", "R"]) {
+            // horizontal bands from seabed to lip, so shading follows the perspective
+            const open = rows.filter((rw) => rw.o >= 0.002);
+            const BANDS = 24;
+            const stops = [[0, [4, 22, 30]], [0.5, [14, 70, 84]], [0.86, [52, 148, 162]], [0.95, [140, 210, 220]], [1, [205, 240, 244]]];
+            const colAt = (fr) => {
+              for (let k = 1; k < stops.length; k++) {
+                if (fr <= stops[k][0]) {
+                  const [f0, c0] = stops[k - 1];
+                  const [f1, c1] = stops[k];
+                  const m = (fr - f0) / (f1 - f0);
+                  return `rgb(${c0.map((c, j) => Math.round(lerp(c, c1[j], m))).join(",")})`;
+                }
+              }
+              return "rgb(205,240,244)";
+            };
+            const at = (pt, fr) => [lerp(pt.fl[0], pt.tp[0], fr), lerp(pt.fl[1], pt.tp[1], fr)];
+            for (let k = 0; k < BANDS; k++) {
+              const f0 = k / BANDS;
+              const f1 = (k + 1) / BANDS + 0.004;
+              const lo = open.map((rw) => at(rw[side], f0));
+              const hi = open.map((rw) => at(rw[side], f1)).reverse();
+              if (lo.length < 2) break;
+              poly(lo.concat(hi));
+              ctx.fillStyle = colAt((f0 + f1) / 2);
+              ctx.fill();
+            }
+            // currents churning inside the wall
+            ctx.save();
+            ctx.globalCompositeOperation = "lighter";
+            for (let k = 1; k < 12; k++) {
+              const fr = (k / 12 + t * 0.05) % 1;
+              ctx.strokeStyle = `rgba(150, 220, 232, ${0.04 + 0.1 * fr})`;
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              rows.forEach((rw, i) => {
+                const pt = rw[side];
+                const x = lerp(pt.fl[0], pt.tp[0], fr);
+                const y = lerp(pt.fl[1], pt.tp[1], fr) + (noise(i * 0.25 + k * 9 + t * 1.2) - 0.5) * 900 / rw.z;
+                i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+              });
+              ctx.stroke();
+            }
+            // foam along the lip
+            ctx.strokeStyle = "rgba(235, 250, 255, 0.85)";
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            rows.forEach((rw, i) => {
+              const [x, y] = rw[side].tp;
+              const yy = y - noise(i * 0.4 + t * 3) * 200 / rw.z;
+              i ? ctx.lineTo(x, yy) : ctx.moveTo(x, yy);
+            });
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // spray flung off the lips
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          for (const p of spray) {
+            const o = openAt(p.u, t);
+            if (o <= 0.05) continue;
+            const z = zAt(p.u) - camZ;
+            if (z <= 3) continue;
+            const life = (p.off + t * p.sp) % 1;
+            const [x, y] = project(p.side * (15 * o + p.dx * life), 4.5 * o + life * 4, z);
+            ctx.fillStyle = `rgba(225, 245, 255, ${0.55 * (1 - life) * o})`;
+            ctx.beginPath();
+            ctx.arc(x, y, Math.max(0.6, (p.s * 60) / z), 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+          ctx.restore();
+
+          vignette(ctx, 0.7);
+          grain(ctx, t, 0.06);
+        }
+
+        const tl = gsap.timeline({ paused: true });
+        drive(tl, D, draw);
+        tl.fromTo(S + " .s3-stage", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "none" }, 0);
+        tl.fromTo(S + " .s3-quote", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 1.0, ease: "power3.out" }, 4.6);
+        tl.fromTo(S + " .s3-ref", { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.7, ease: "power2.out" }, 5.0);
+        tl.to(S + " .s3-text", { opacity: 0, duration: 0.5, ease: "power1.in" }, 6.9);
+        window.__timelines["s3-parting"] = tl;
+      })();
+    </script>
+  </div>
+</template>

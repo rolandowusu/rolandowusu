@@ -1,0 +1,175 @@
+<template id="s5-dawn-template">
+  <div data-composition-id="s5-dawn" data-width="1920" data-height="1080" data-duration="4.8">
+    <div class="s5-stage">
+      <canvas class="s5-canvas" width="1920" height="1080" data-layout-allow-overflow></canvas>
+      <div class="s5-text">
+        <h1 class="s5-title">The Way Through the Sea</h1>
+        <div class="s5-rule"></div>
+        <div class="s5-ref">Exodus 14</div>
+      </div>
+      <div class="s5-black"></div>
+    </div>
+
+    <style>
+      [data-composition-id="s5-dawn"] {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+      }
+      [data-composition-id="s5-dawn"] .s5-stage {
+        position: absolute;
+        inset: 0;
+        background: #0e1830;
+      }
+      [data-composition-id="s5-dawn"] .s5-canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      [data-composition-id="s5-dawn"] .s5-text {
+        position: absolute;
+        left: 120px;
+        top: 130px;
+        width: 1100px;
+      }
+      [data-composition-id="s5-dawn"] .s5-title {
+        font-family: "EB Garamond", serif;
+        font-weight: 400;
+        font-size: 104px;
+        line-height: 1.02;
+        letter-spacing: -0.02em;
+        color: #f6ecd9;
+        text-shadow: 0 4px 30px rgba(5, 10, 25, 0.85);
+      }
+      [data-composition-id="s5-dawn"] .s5-rule {
+        width: 260px;
+        height: 3px;
+        margin: 30px 0 24px;
+        background: #f2b264;
+        transform-origin: 0 50%;
+      }
+      [data-composition-id="s5-dawn"] .s5-ref {
+        font-family: "Oswald", sans-serif;
+        font-weight: 400;
+        font-size: 30px;
+        letter-spacing: 0.42em;
+        text-transform: uppercase;
+        color: #f2b264;
+        text-shadow: 0 2px 14px rgba(5, 10, 25, 0.9);
+      }
+      [data-composition-id="s5-dawn"] .s5-black {
+        position: absolute;
+        inset: 0;
+        background: #000;
+        opacity: 0;
+      }
+    </style>
+
+    <script>
+      (function () {
+        const S = '[data-composition-id="s5-dawn"]';
+        const D = 4.8;
+        const { W, H, rng, noise, lerp, smooth, figure, crowd, grain, vignette, cloud, drive } = window.RS;
+        const canvas = document.querySelector(S + " .s5-canvas");
+        const ctx = canvas.getContext("2d");
+        const HZ = 640;
+        const SUNX = 1330;
+        // the far shore: a ridge falling to the waterline, people standing on its crest
+        const ridgeY = (x) => 700 - 26 * noise(x * 0.012) + Math.pow(Math.max(0, x - 650) / 750, 2) * 420;
+        const people = crowd(505, 46, { x0: -20, x1: 900 });
+        const r = rng(606);
+        people.forEach((p) => {
+          p.arms = r() < 0.3;
+          p.d = p.d * 0.55;
+        });
+
+        function draw(t) {
+          const cam = 1.04 - 0.04 * smooth(0, D, t);
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, W, H);
+          ctx.save();
+          ctx.translate(W / 2, H / 2);
+          ctx.scale(cam, cam);
+          ctx.translate(-W / 2, -H / 2);
+
+          const sunY = HZ + 30 - 70 * smooth(0, D, t);
+          // dawn sky
+          const g = ctx.createLinearGradient(0, -80, 0, HZ);
+          g.addColorStop(0, "#0f1a36");
+          g.addColorStop(0.45, "#3a3f66");
+          g.addColorStop(0.75, "#b46a62");
+          g.addColorStop(1, "#f2b56e");
+          ctx.fillStyle = g;
+          ctx.fillRect(-100, -100, W + 200, HZ + 100);
+          const sg = ctx.createRadialGradient(SUNX, sunY, 0, SUNX, sunY, 760);
+          sg.addColorStop(0, "rgba(255, 236, 190, 0.95)");
+          sg.addColorStop(0.06, "rgba(255, 210, 140, 0.7)");
+          sg.addColorStop(0.3, "rgba(255, 160, 100, 0.22)");
+          sg.addColorStop(1, "rgba(255, 140, 90, 0)");
+          ctx.fillStyle = sg;
+          ctx.fillRect(SUNX - 760, sunY - 760, 1520, 1520);
+          ctx.fillStyle = "rgba(255, 244, 214, 1)";
+          ctx.beginPath();
+          ctx.arc(SUNX, sunY, 46, 0, Math.PI * 2);
+          ctx.fill();
+          for (let i = 0; i < 5; i++) {
+            const x = ((i * 520 + t * (10 + i * 4)) % 2600) - 400;
+            cloud(ctx, x, 300 + i * 50, 700, 30, `rgba(${120 + i * 20}, 70, 80, 0.35)`, 600 + i);
+          }
+
+          // the calm sea, closed again behind them
+          ctx.fillStyle = "#1c2440";
+          ctx.fillRect(-100, HZ, W + 200, H - HZ + 100);
+          const sea = ctx.createLinearGradient(0, HZ, 0, H);
+          sea.addColorStop(0, "rgba(200, 120, 100, 0.45)");
+          sea.addColorStop(1, "rgba(10, 14, 30, 0.9)");
+          ctx.fillStyle = sea;
+          ctx.fillRect(-100, HZ, W + 200, H - HZ + 100);
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          for (let i = 0; i < 60; i++) {
+            const v = i / 60;
+            const y = HZ + 4 + v * v * 420;
+            const span = 40 + v * 360;
+            const xo = (noise(i * 2.3 + t * 0.8) - 0.5) * span;
+            ctx.fillStyle = `rgba(255, 200, 140, ${(0.12 + 0.4 * noise(i * 5.1 + t * 2)) * (1 - v * 0.7)})`;
+            ctx.fillRect(SUNX + xo - span * 0.22, y, span * 0.44, 2 + v * 3);
+          }
+          ctx.restore();
+
+          // the far shore ridge where Israel stands
+          ctx.fillStyle = "#0b0a12";
+          ctx.beginPath();
+          ctx.moveTo(-100, H + 100);
+          for (let x = -100; x <= 1500; x += 20) ctx.lineTo(x, ridgeY(x));
+          ctx.lineTo(1500, H + 100);
+          ctx.closePath();
+          ctx.fill();
+          for (const p of people) {
+            const x = p.x;
+            const y = ridgeY(x) + 6 + p.d * 220;
+            const h = lerp(120, 330, p.d);
+            const o = { phase: p.phase + t * 1.5, walk: 0.1, child: p.child, staff: p.staff, lean: p.lean, arms: p.arms };
+            figure(ctx, x + 2, y - 2, h, Object.assign({ fill: "rgba(255, 170, 110, 0.5)" }, o));
+            figure(ctx, x, y, h, Object.assign({ fill: "#08070d" }, o));
+          }
+          ctx.restore();
+
+          vignette(ctx, 0.6);
+          grain(ctx, t, 0.05);
+        }
+
+        const tl = gsap.timeline({ paused: true });
+        drive(tl, D, draw);
+        tl.fromTo(S + " .s5-stage", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "none" }, 0);
+        tl.fromTo(S + " .s5-title", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 1.2, ease: "power3.out" }, 0.7);
+        tl.fromTo(S + " .s5-rule", { scaleX: 0 }, { scaleX: 1, duration: 0.9, ease: "power3.inOut" }, 1.2);
+        tl.fromTo(S + " .s5-ref", { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.7, ease: "power2.out" }, 1.5);
+        tl.to(S + " .s5-black", { opacity: 1, duration: 0.9, ease: "power1.in" }, 3.9);
+        window.__timelines["s5-dawn"] = tl;
+      })();
+    </script>
+  </div>
+</template>

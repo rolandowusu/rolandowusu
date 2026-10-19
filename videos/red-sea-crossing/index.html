@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="assets/vendor/gsap.min.js"></script>
+    <script src="assets/scene-lib.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #05070d;
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #05070d;
+      }
+      [data-composition-id="main"] > div[data-composition-src] {
+        position: absolute;
+        inset: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="30" data-width="1920" data-height="1080">
+      <div id="el-s1" data-composition-id="s1-shore" data-composition-src="compositions/s1-shore.html" data-start="0" data-duration="6.5" data-track-index="1" data-width="1920" data-height="1080"></div>
+      <div id="el-s2" data-composition-id="s2-staff" data-composition-src="compositions/s2-staff.html" data-start="5.9" data-duration="6.6" data-track-index="2" data-width="1920" data-height="1080"></div>
+      <div id="el-s3" data-composition-id="s3-parting" data-composition-src="compositions/s3-parting.html" data-start="11.9" data-duration="7.5" data-track-index="1" data-width="1920" data-height="1080"></div>
+      <div id="el-s4" data-composition-id="s4-crossing" data-composition-src="compositions/s4-crossing.html" data-start="18.8" data-duration="7" data-track-index="2" data-width="1920" data-height="1080"></div>
+      <div id="el-s5" data-composition-id="s5-dawn" data-composition-src="compositions/s5-dawn.html" data-start="25.2" data-duration="4.8" data-track-index="1" data-width="1920" data-height="1080"></div>
+
+      <audio id="el-sound" src="assets/sound.wav" data-start="0" data-duration="30" data-track-index="10" data-volume="0.9"></audio>
+    </div>
+    <script>
+      window.__timelines["main"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

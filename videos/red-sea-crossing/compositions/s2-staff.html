@@ -1,0 +1,324 @@
+<template id="s2-staff-template">
+  <div data-composition-id="s2-staff" data-width="1920" data-height="1080" data-duration="6.6">
+    <div class="s2-stage">
+      <canvas class="s2-canvas" width="1920" height="1080" data-layout-allow-overflow></canvas>
+      <div class="s2-text">
+        <p class="s2-quote">“Lift thou up thy rod, and stretch out thine hand over the sea, and divide it.”</p>
+        <div class="s2-ref">Exodus 14:16</div>
+      </div>
+    </div>
+
+    <style>
+      [data-composition-id="s2-staff"] {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+      }
+      [data-composition-id="s2-staff"] .s2-stage {
+        position: absolute;
+        inset: 0;
+        background: #070b16;
+      }
+      [data-composition-id="s2-staff"] .s2-canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      [data-composition-id="s2-staff"] .s2-text {
+        position: absolute;
+        left: 110px;
+        top: 390px;
+        width: 860px;
+      }
+      [data-composition-id="s2-staff"] .s2-quote {
+        font-family: "EB Garamond", serif;
+        font-weight: 400;
+        font-size: 58px;
+        line-height: 1.14;
+        letter-spacing: -0.01em;
+        color: #f3e9d6;
+        text-shadow: 0 3px 24px rgba(0, 0, 0, 0.95);
+      }
+      [data-composition-id="s2-staff"] .s2-ref {
+        margin-top: 26px;
+        font-family: "Oswald", sans-serif;
+        font-weight: 400;
+        font-size: 28px;
+        letter-spacing: 0.36em;
+        text-transform: uppercase;
+        color: #f2b264;
+        text-shadow: 0 2px 14px rgba(0, 0, 0, 0.9);
+      }
+    </style>
+
+    <script>
+      (function () {
+        const S = '[data-composition-id="s2-staff"]';
+        const D = 6.6;
+        const { W, H, rng, noise, lerp, smooth, easeInOut, figure, crowd, grain, vignette, cloud, drive } = window.RS;
+        const canvas = document.querySelector(S + " .s2-canvas");
+        const ctx = canvas.getContext("2d");
+        const HORIZON = 640;
+        const people = crowd(52, 90, { x0: -60, x1: 860 });
+        const streaks = [];
+        const r = rng(77);
+        for (let i = 0; i < 60; i++) streaks.push({ y: r() * H * 0.9, len: 120 + r() * 380, sp: 900 + r() * 900, off: r() * 3000, a: 0.05 + r() * 0.12 });
+
+        // Lightning: a seeded jagged bolt with a couple of forks.
+        function bolt(seed, x0, y0, y1) {
+          const br = rng(seed);
+          const pts = [[x0, y0]];
+          let x = x0;
+          for (let y = y0; y < y1; y += 28 + br() * 30) {
+            x += (br() - 0.5) * 70;
+            pts.push([x, y]);
+          }
+          return pts;
+        }
+        const BOLT = bolt(5, 520, -20, HORIZON + 10);
+        const FORK = bolt(9, 560, 210, 470);
+        const flashAt = [2.55, 3.05];
+        const flash = (t) => {
+          let f = 0;
+          for (const ft of flashAt) {
+            const d = t - ft;
+            if (d >= 0 && d < 0.7) f = Math.max(f, d < 0.05 ? d / 0.05 : Math.exp(-(d - 0.05) * 7));
+          }
+          return f;
+        };
+
+        // Staff angle: hanging at his side, then raised high over the sea.
+        const raise = (t) => easeInOut((t - 1.0) / 1.5);
+
+        function drawMoses(t, fill, dx, dy) {
+          const fx = 1240 + dx;
+          const fy = 850 + dy;
+          const h = 440;
+          const wind = Math.sin(t * 7) * 0.5 + noise(t * 3) - 0.5;
+          ctx.fillStyle = fill;
+          ctx.strokeStyle = fill;
+          // the back of the robe snapping in the wind
+          ctx.beginPath();
+          ctx.moveTo(fx + 50, fy - h * 0.7);
+          ctx.quadraticCurveTo(fx + 120, fy - h * 0.45 + wind * 10, fx + 150 + wind * 14, fy - h * 0.18);
+          ctx.quadraticCurveTo(fx + 120, fy - h * 0.12, fx + 60, fy - h * 0.06);
+          ctx.closePath();
+          ctx.fill();
+          figure(ctx, fx, fy, h, { phase: 0, walk: 0, lean: -0.12, fill });
+          // beard
+          ctx.beginPath();
+          ctx.moveTo(fx - 40, fy - h * 0.88);
+          ctx.quadraticCurveTo(fx - 64, fy - h * 0.76, fx - 34, fy - h * 0.71);
+          ctx.lineTo(fx - 16, fy - h * 0.8);
+          ctx.fill();
+          // the arm sweeps from his side, forward and up over the sea
+          const a = raise(t);
+          const ang = lerp(1.87, 3.75, a);
+          const sx = fx - 30;
+          const sy = fy - h * 0.7;
+          const armL = h * 0.34;
+          const hx = sx + Math.cos(ang) * armL;
+          const hy = sy + Math.sin(ang) * armL;
+          ctx.lineCap = "round";
+          ctx.lineWidth = 28;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(hx, hy);
+          ctx.stroke();
+          // wide sleeve hanging under the arm
+          ctx.beginPath();
+          ctx.moveTo(sx + 6, sy - 8);
+          ctx.quadraticCurveTo((sx + hx) / 2 + 10, (sy + hy) / 2 + 46 + wind * 6, hx + 8, hy + 12);
+          ctx.lineTo(hx, hy - 10);
+          ctx.closePath();
+          ctx.fill();
+          // the rod, upright at first, leaning out over the water as it rises
+          const rodAng = lerp(-1.57, -2.1, a);
+          const rl = h * 0.8;
+          ctx.lineWidth = 10;
+          ctx.beginPath();
+          ctx.moveTo(hx - Math.cos(rodAng) * rl * 0.22, hy - Math.sin(rodAng) * rl * 0.22);
+          ctx.lineTo(hx + Math.cos(rodAng) * rl * 0.78, hy + Math.sin(rodAng) * rl * 0.78);
+          ctx.stroke();
+          return [hx + Math.cos(rodAng) * rl * 0.78, hy + Math.sin(rodAng) * rl * 0.78];
+        }
+
+        function rodGlint(t, tip) {
+          const gl = smooth(2.2, 3.0, t) * (0.85 + 0.15 * Math.sin(t * 9));
+          if (gl <= 0) return;
+          const [tx, ty] = tip;
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          const g = ctx.createRadialGradient(tx, ty, 0, tx, ty, 160);
+          g.addColorStop(0, `rgba(255, 236, 190, ${0.9 * gl})`);
+          g.addColorStop(0.2, `rgba(255, 190, 110, ${0.35 * gl})`);
+          g.addColorStop(1, "rgba(255, 160, 80, 0)");
+          ctx.fillStyle = g;
+          ctx.fillRect(tx - 160, ty - 160, 320, 320);
+          ctx.restore();
+        }
+
+        function draw(t) {
+          const f = flash(t);
+          const cam = 1 + 0.1 * smooth(0, D, t);
+          const shake = f * 6;
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, W, H);
+          ctx.save();
+          ctx.translate(W * 0.6 + Math.sin(t * 60) * shake, H * 0.55 + Math.cos(t * 53) * shake);
+          ctx.scale(cam, cam);
+          ctx.translate(-W * 0.6, -H * 0.55);
+
+          // storm sky
+          const g = ctx.createLinearGradient(0, -100, 0, HORIZON);
+          g.addColorStop(0, "#05070f");
+          g.addColorStop(0.6, "#121a2e");
+          g.addColorStop(1, "#24304a");
+          ctx.fillStyle = g;
+          ctx.fillRect(-100, -100, W + 200, HORIZON + 100);
+          for (let i = 0; i < 9; i++) {
+            const y = 40 + i * 62;
+            const x = ((i * 523 - t * (80 + i * 22)) % 2800 + 2800) % 2800 - 500;
+            cloud(ctx, x, y, 900, 70 + (i % 3) * 18, i % 2 ? "rgba(6, 9, 20, 0.75)" : "rgba(40, 52, 80, 0.45)", 100 + i);
+          }
+          if (f > 0) {
+            ctx.save();
+            ctx.globalCompositeOperation = "lighter";
+            ctx.fillStyle = `rgba(160, 180, 230, ${0.35 * f})`;
+            ctx.fillRect(-100, -100, W + 200, HORIZON + 100);
+            ctx.strokeStyle = `rgba(235, 240, 255, ${f})`;
+            // glow by stacking wide faint strokes under the sharp core
+            for (const [pts, lw] of [[BOLT, 5], [FORK, 2.5]]) {
+              for (const [mul, al] of [[8, 0.08], [4, 0.18], [1, 1]]) {
+                ctx.strokeStyle = `rgba(225, 235, 255, ${al * f})`;
+                ctx.lineWidth = lw * mul;
+                ctx.beginPath();
+                pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+                ctx.stroke();
+              }
+            }
+            ctx.restore();
+          }
+
+          // churning sea
+          const sea = ctx.createLinearGradient(0, HORIZON, 0, H);
+          sea.addColorStop(0, "#22364d");
+          sea.addColorStop(1, "#06101b");
+          ctx.fillStyle = sea;
+          ctx.fillRect(-100, HORIZON, W + 200, H - HORIZON + 100);
+          const rough = 0.4 + 0.6 * smooth(1.0, 3.0, t);
+          for (let i = 0; i < 16; i++) {
+            const v = i / 16;
+            const y = HORIZON + 4 + v * v * 440;
+            const amp = (4 + v * 26) * rough;
+            ctx.beginPath();
+            ctx.moveTo(-100, H + 100);
+            for (let x = -100; x <= W + 100; x += 24) {
+              const n = noise(x * 0.004 * (2 - v) + i * 13 - t * (0.8 + v)) - 0.5;
+              ctx.lineTo(x, y - Math.abs(Math.sin(x * 0.012 / (0.4 + v) + t * 2.4 + i)) * amp + n * amp);
+            }
+            ctx.lineTo(W + 100, H + 100);
+            ctx.closePath();
+            const shade = 20 + v * 10;
+            ctx.fillStyle = `rgba(${shade}, ${shade + 22}, ${shade + 40}, 0.55)`;
+            ctx.fill();
+            ctx.strokeStyle = `rgba(200, 220, 240, ${(0.06 + 0.16 * v) * rough + f * 0.2})`;
+            ctx.lineWidth = 1 + v * 2;
+            ctx.stroke();
+          }
+
+          // wind streaks
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          const wind = 0.4 + 0.6 * smooth(0.8, 2.2, t);
+          for (const s of streaks) {
+            const x = ((s.off + t * s.sp) % 3000) - 600;
+            ctx.strokeStyle = `rgba(200, 215, 240, ${s.a * wind})`;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(x, s.y);
+            ctx.lineTo(x + s.len, s.y - s.len * 0.06);
+            ctx.stroke();
+          }
+          ctx.restore();
+
+          // light breaking through the clouds behind him as the rod rises
+          const brk = 0.35 + 0.65 * smooth(1.6, 3.2, t);
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          const back = ctx.createRadialGradient(1180, 380, 20, 1180, 380, 620);
+          back.addColorStop(0, `rgba(170, 190, 230, ${0.42 * brk})`);
+          back.addColorStop(0.5, `rgba(90, 110, 160, ${0.16 * brk})`);
+          back.addColorStop(1, "rgba(60, 80, 130, 0)");
+          ctx.fillStyle = back;
+          ctx.fillRect(400, -300, 1600, 1300);
+          for (let k = 0; k < 7; k++) {
+            const a0 = -2.3 + k * 0.42 + Math.sin(t * 0.6 + k) * 0.03;
+            ctx.fillStyle = `rgba(190, 205, 240, ${0.05 * brk})`;
+            ctx.beginPath();
+            ctx.moveTo(1215, 470);
+            ctx.lineTo(1215 + Math.cos(a0) * 1500, 470 + Math.sin(a0) * 1500);
+            ctx.lineTo(1215 + Math.cos(a0 + 0.12) * 1500, 470 + Math.sin(a0 + 0.12) * 1500);
+            ctx.closePath();
+            ctx.fill();
+          }
+          ctx.restore();
+
+          // the near shore where the people wait
+          ctx.fillStyle = "#080a12";
+          ctx.beginPath();
+          ctx.moveTo(-100, 905);
+          ctx.quadraticCurveTo(500, 890, 980, 960);
+          ctx.lineTo(980, H + 100);
+          ctx.lineTo(-100, H + 100);
+          ctx.closePath();
+          ctx.fill();
+
+          // the rock
+          ctx.fillStyle = "#06070c";
+          ctx.beginPath();
+          ctx.moveTo(880, H + 100);
+          ctx.lineTo(960, 900);
+          ctx.lineTo(1060, 836);
+          ctx.lineTo(1180, 812);
+          ctx.lineTo(1330, 818);
+          ctx.lineTo(1460, 850);
+          ctx.lineTo(1560, 930);
+          ctx.lineTo(1700, H + 100);
+          ctx.closePath();
+          ctx.fill();
+          drawMoses(t, `rgba(170, 190, 235, ${0.55 + 0.4 * f})`, -5, -4);
+          const tip = drawMoses(t, "#04050a", 0, 0);
+          rodGlint(t, tip);
+
+          // the people, small on the shore below, watching
+          for (const p of people) {
+            const y = lerp(930, H + 30, p.d);
+            const h = lerp(40, 120, p.d);
+            const o = { phase: p.phase + t * 2, walk: 0.15, child: p.child, staff: p.staff, lean: p.lean };
+            figure(ctx, p.x + 2, y - 2, h, Object.assign({ fill: "rgba(150, 170, 220, 0.35)" }, o));
+            figure(ctx, p.x, y, h, Object.assign({ fill: "#04050a" }, o));
+          }
+          ctx.restore();
+
+          if (f > 0) {
+            ctx.fillStyle = `rgba(220, 230, 255, ${0.18 * f})`;
+            ctx.fillRect(0, 0, W, H);
+          }
+          vignette(ctx, 0.75);
+          grain(ctx, t, 0.06);
+        }
+
+        const tl = gsap.timeline({ paused: true });
+        drive(tl, D, draw);
+        tl.fromTo(S + " .s2-stage", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "none" }, 0);
+        tl.fromTo(S + " .s2-quote", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 1.0, ease: "power3.out" }, 3.4);
+        tl.fromTo(S + " .s2-ref", { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: 0.7, ease: "power2.out" }, 3.9);
+        tl.to(S + " .s2-text", { opacity: 0, duration: 0.5, ease: "power1.in" }, 6.0);
+        window.__timelines["s2-staff"] = tl;
+      })();
+    </script>
+  </div>
+</template>

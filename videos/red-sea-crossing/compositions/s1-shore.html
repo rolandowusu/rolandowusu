@@ -1,0 +1,220 @@
+<template id="s1-shore-template">
+  <div data-composition-id="s1-shore" data-width="1920" data-height="1080" data-duration="6.5">
+    <canvas class="s1-canvas" width="1920" height="1080" data-layout-allow-overflow></canvas>
+    <div class="s1-text">
+      <div class="s1-label">Exodus 14</div>
+      <div class="s1-rule"></div>
+      <p class="s1-line">The sea before them. Pharaoh’s army behind.</p>
+    </div>
+
+    <style>
+      [data-composition-id="s1-shore"] {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        background: #070b16;
+      }
+      [data-composition-id="s1-shore"] .s1-canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      [data-composition-id="s1-shore"] .s1-text {
+        position: absolute;
+        left: 600px;
+        top: 120px;
+        width: 1200px;
+      }
+      [data-composition-id="s1-shore"] .s1-label {
+        font-family: "Oswald", sans-serif;
+        font-weight: 400;
+        font-size: 30px;
+        letter-spacing: 0.42em;
+        text-transform: uppercase;
+        color: #f2b264;
+        text-shadow: 0 2px 14px rgba(0, 0, 0, 0.9);
+      }
+      [data-composition-id="s1-shore"] .s1-rule {
+        width: 220px;
+        height: 3px;
+        margin: 22px 0 26px;
+        background: #f2b264;
+        transform-origin: 0 50%;
+      }
+      [data-composition-id="s1-shore"] .s1-line {
+        font-family: "EB Garamond", serif;
+        font-weight: 400;
+        font-size: 64px;
+        line-height: 1.12;
+        letter-spacing: -0.01em;
+        color: #f3e9d6;
+        text-shadow: 0 3px 24px rgba(0, 0, 0, 0.95);
+      }
+    </style>
+
+    <script>
+      (function () {
+        const S = '[data-composition-id="s1-shore"]';
+        const D = 6.5;
+        const { W, H, rng, noise, lerp, smooth, figure, crowd, stars, drawStars, grain, vignette, pillarOfFire, cloud, drive } = window.RS;
+        const canvas = document.querySelector(S + " .s1-canvas");
+        const ctx = canvas.getContext("2d");
+        const sky = stars(11, 260);
+        const people = crowd(21, 640, { x0: -80, x1: 1050 });
+        const r = rng(31);
+        const torches = [];
+        for (let i = 0; i < 18; i++) torches.push({ x: 30 + i * 22 + r() * 10, y: 536 + r() * 10, p: r() * 6.28 });
+        // the beach ends at the shoreline curve; keep everyone on the sand
+        const shoreX = (y) => 760 + Math.pow((y - 560) / 620, 0.85) * 390;
+
+        const HORIZON = 560;
+
+        function draw(t) {
+          const cam = 1 + 0.07 * smooth(0, D, t);
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, W, H);
+          ctx.save();
+          ctx.translate(W * 0.62, H * 0.55);
+          ctx.scale(cam, cam);
+          ctx.translate(-W * 0.62, -H * 0.55);
+
+          // night sky
+          const g = ctx.createLinearGradient(0, 0, 0, HORIZON);
+          g.addColorStop(0, "#060a18");
+          g.addColorStop(0.7, "#101a33");
+          g.addColorStop(1, "#1d2440");
+          ctx.fillStyle = g;
+          ctx.fillRect(-100, -100, W + 200, HORIZON + 100);
+          drawStars(ctx, sky, t, 0.8);
+
+          // moon haze over the sea
+          const moon = ctx.createRadialGradient(1700, 150, 4, 1700, 150, 360);
+          moon.addColorStop(0, "rgba(220, 230, 255, 0.55)");
+          moon.addColorStop(0.08, "rgba(200, 215, 255, 0.25)");
+          moon.addColorStop(1, "rgba(120, 140, 200, 0)");
+          ctx.fillStyle = moon;
+          ctx.fillRect(1200, -250, 900, 800);
+          ctx.fillStyle = "rgba(236, 240, 255, 0.92)";
+          ctx.beginPath();
+          ctx.arc(1700, 150, 24, 0, Math.PI * 2);
+          ctx.fill();
+
+          // drifting cloud bands
+          for (let i = 0; i < 5; i++) {
+            const y = 120 + i * 80;
+            const x = ((i * 470 + t * (12 + i * 5)) % 2600) - 400;
+            cloud(ctx, x, y, 700, 50 + i * 8, "rgba(8, 12, 28, 0.6)", 40 + i);
+          }
+
+          // the far ridge where Pharaoh's army waits
+          ctx.fillStyle = "#0a0e1c";
+          ctx.beginPath();
+          ctx.moveTo(-100, HORIZON + 4);
+          for (let x = -100; x <= 760; x += 20) ctx.lineTo(x, HORIZON - 14 - 26 * noise(x * 0.01) - (x < 400 ? 18 : 0));
+          ctx.lineTo(760, HORIZON + 10);
+          ctx.closePath();
+          ctx.fill();
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          for (const tc of torches) {
+            const f = 0.55 + 0.45 * noise(t * 5 + tc.p * 10);
+            const gl = ctx.createRadialGradient(tc.x, tc.y - 20, 0, tc.x, tc.y - 20, 10);
+            gl.addColorStop(0, `rgba(255, 170, 70, ${0.85 * f})`);
+            gl.addColorStop(1, "rgba(255, 90, 20, 0)");
+            ctx.fillStyle = gl;
+            ctx.fillRect(tc.x - 16, tc.y - 36, 32, 32);
+          }
+          ctx.restore();
+
+          // sea (right) with moonlit glitter
+          const sea = ctx.createLinearGradient(0, HORIZON, 0, H);
+          sea.addColorStop(0, "#1b2c45");
+          sea.addColorStop(1, "#08121f");
+          ctx.fillStyle = sea;
+          ctx.beginPath();
+          ctx.moveTo(760, HORIZON);
+          ctx.lineTo(W + 100, HORIZON);
+          ctx.lineTo(W + 100, H + 100);
+          ctx.lineTo(1150, H + 100);
+          ctx.bezierCurveTo(1080, 820, 900, 650, 760, HORIZON);
+          ctx.fill();
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          for (let i = 0; i < 70; i++) {
+            const v = i / 70;
+            const y = HORIZON + 6 + v * v * 520;
+            const span = 30 + v * 260;
+            const xo = (noise(i * 3.1 + t * 0.9) - 0.5) * span;
+            const a = (0.08 + 0.32 * noise(i * 7.7 + t * 2.2)) * (1 - v * 0.6);
+            ctx.fillStyle = `rgba(190, 210, 255, ${a})`;
+            ctx.fillRect(1700 + xo - span * 0.25, y, span * 0.5, 2 + v * 3);
+          }
+          ctx.restore();
+          // wave crests rolling to shore
+          ctx.strokeStyle = "rgba(160, 190, 230, 0.22)";
+          ctx.lineWidth = 2;
+          for (let i = 0; i < 9; i++) {
+            const v = ((i / 9 + t * 0.05) % 1);
+            const y = HORIZON + 20 + v * v * 480;
+            ctx.beginPath();
+            for (let x = 800 + v * 260; x < W + 60; x += 30) {
+              const yy = y + Math.sin(x * 0.02 + t * 2 + i) * (2 + v * 6);
+              if (x === 800 + v * 260) ctx.moveTo(x, yy);
+              else ctx.lineTo(x, yy);
+            }
+            ctx.stroke();
+          }
+
+          // beach
+          const sand = ctx.createLinearGradient(0, HORIZON, 0, H);
+          sand.addColorStop(0, "#1a1a26");
+          sand.addColorStop(1, "#0c0b12");
+          ctx.fillStyle = sand;
+          ctx.beginPath();
+          ctx.moveTo(-100, HORIZON + 2);
+          ctx.lineTo(760, HORIZON + 2);
+          ctx.bezierCurveTo(900, 650, 1080, 820, 1150, H + 100);
+          ctx.lineTo(-100, H + 100);
+          ctx.closePath();
+          ctx.fill();
+
+          // pillar of fire standing between the camp and the army
+          pillarOfFire(ctx, 260, HORIZON + 40, 430, t, 0.9 + 0.1 * Math.sin(t * 3));
+          // warm light pooling on the sand
+          const pool = ctx.createRadialGradient(260, 640, 10, 260, 640, 620);
+          pool.addColorStop(0, "rgba(255, 140, 50, 0.28)");
+          pool.addColorStop(1, "rgba(255, 140, 50, 0)");
+          ctx.fillStyle = pool;
+          ctx.fillRect(-400, 0, 1400, 1100);
+
+          // the crowd, facing the sea
+          for (const p of people) {
+            const y = lerp(HORIZON + 30, H + 40, p.d);
+            const h = lerp(26, 210, p.d * p.d);
+            const x = p.x + (1 - p.d) * 260;
+            if (x > shoreX(y) - 30 - h * 0.3) continue;
+            const ph = p.phase + t * p.speed * 2;
+            const rim = Math.max(0, 1 - Math.abs(x - 260) / 900);
+            figure(ctx, x - h * 0.03, y, h, { phase: ph, walk: 0.25, child: p.child, staff: p.staff, bundle: p.bundle, lean: p.lean, fill: `rgba(255, 150, 60, ${0.55 * rim})` });
+            figure(ctx, x, y, h, { phase: ph, walk: 0.25, child: p.child, staff: p.staff, bundle: p.bundle, lean: p.lean, fill: "#05060b" });
+          }
+          ctx.restore();
+
+          vignette(ctx, 0.75);
+          grain(ctx, t, 0.06);
+        }
+
+        const tl = gsap.timeline({ paused: true });
+        drive(tl, D, draw);
+        tl.fromTo(S + " .s1-label", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.8, ease: "power2.out" }, 1.0);
+        tl.fromTo(S + " .s1-rule", { scaleX: 0 }, { scaleX: 1, duration: 0.9, ease: "power3.inOut" }, 1.2);
+        tl.fromTo(S + " .s1-line", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 1.1, ease: "power3.out" }, 1.5);
+        tl.to(S + " .s1-text", { opacity: 0, duration: 0.6, ease: "power1.in" }, 5.4);
+        tl.fromTo(S + " .s1-canvas", { opacity: 0 }, { opacity: 1, duration: 1.2, ease: "power1.out" }, 0);
+        window.__timelines["s1-shore"] = tl;
+      })();
+    </script>
+  </div>
+</template>
